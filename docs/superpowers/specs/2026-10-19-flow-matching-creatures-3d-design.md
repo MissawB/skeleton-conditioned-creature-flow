@@ -1,8 +1,8 @@
 # Spécification de Conception : Génération Compositionnelle de Créatures 3D par Flow Matching Conditionné sur Squelette
 
 **Date** : 2026-10-19  
-**Auteur** : Antigravity & Utilisateur  
-**Projet** : Portfolio & R&D en Deep Learning Géométrique 3D  
+**Auteur** : MissawB  
+**Projet** : R&D en Deep Learning Géométrique 3D  
 **Statut** : Validé pour Planification  
 
 ---
