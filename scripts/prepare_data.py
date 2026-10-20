@@ -25,7 +25,7 @@ def main():
         augment=False,
         cache_dir=cache_dir
     )
-    print(f"Dataset successfully created and cached at {cache_dir}/dataset.pt (Total: {len(dataset)} samples).")
+    print(f"Dataset successfully created and cached in {cache_dir}/ (Total: {len(dataset)} samples).")
 
 if __name__ == "__main__":
     main()

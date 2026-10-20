@@ -3,7 +3,7 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset
 from typing import Optional, Tuple
-from data.smal_quadrupeds import SMALQuadrupedGenerator, FAMILIES, PARENT_INDICES
+from data.smal_quadrupeds import SMALQuadrupedGenerator, FAMILIES, PARENT_INDICES, GENERATOR_VERSION
 
 class CreatureDataset(Dataset):
     """PyTorch Dataset for 3D creatures conditioned on kinematic skeletons."""
@@ -23,9 +23,11 @@ class CreatureDataset(Dataset):
         self.samples = []
         
         generator = SMALQuadrupedGenerator(seed=seed)
-        
-        if cache_dir and os.path.exists(os.path.join(cache_dir, "dataset.pt")):
-            cached = torch.load(os.path.join(cache_dir, "dataset.pt"), weights_only=False)
+        # Cache file is keyed on generation parameters so a config change never reuses stale samples
+        cache_file = os.path.join(cache_dir, f"dataset_v{GENERATOR_VERSION}_n{num_samples_per_family}_p{num_points}_s{seed}.pt") if cache_dir else None
+
+        if cache_file and os.path.exists(cache_file):
+            cached = torch.load(cache_file, weights_only=False)
             self.samples = cached["samples"]
         else:
             for family in FAMILIES:
@@ -33,9 +35,9 @@ class CreatureDataset(Dataset):
                     instance = generator.generate_instance(family=family, num_points=num_points)
                     self.samples.append(instance)
                     
-            if cache_dir:
+            if cache_file:
                 os.makedirs(cache_dir, exist_ok=True)
-                torch.save({"samples": self.samples}, os.path.join(cache_dir, "dataset.pt"))
+                torch.save({"samples": self.samples}, cache_file)
 
     def __len__(self) -> int:
         return len(self.samples)

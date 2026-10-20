@@ -4,3 +4,4 @@ __pycache__/
 checkpoints/
 data/cache/
 *.log
+.venv/

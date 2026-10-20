@@ -98,7 +98,8 @@ class PointDiTBlock(nn.Module):
         
         # Self-Attention on points
         normed = self.norm1(x) * (1 + scale_msa.unsqueeze(1)) + shift_msa.unsqueeze(1)
-        sa_out, _ = self.self_attn(normed, normed, normed)
+        # need_weights=False lets PyTorch dispatch to fused SDPA kernels (no N x N attention matrix kept)
+        sa_out, _ = self.self_attn(normed, normed, normed, need_weights=False)
         x = x + gate_msa.unsqueeze(1) * sa_out
         
         # Spatial Cross-Attention to skeleton joints

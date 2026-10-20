@@ -22,7 +22,15 @@ def main():
         num_layers=cfg["model"]["num_layers"],
         num_heads=cfg["model"]["num_heads"],
         num_joints=cfg["model"]["num_joints"]
-    ).to(device)
+    )
+    ckpt_path = os.path.join(cfg["training"]["checkpoint_dir"], f"model_epoch_{cfg['training']['num_epochs']:03d}.pt")
+    if os.path.exists(ckpt_path):
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state"])
+        print(f"Loaded checkpoint from {ckpt_path}")
+    else:
+        print(f"Warning: no checkpoint at {ckpt_path}, evaluating an untrained model.")
+    model.to(device)
     fm = OptimalTransportFlowMatching(model)
     
     print("Evaluating test metrics on generated creatures...")

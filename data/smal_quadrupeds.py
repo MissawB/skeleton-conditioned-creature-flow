@@ -31,12 +31,15 @@ PARENT_INDICES = [
     -1,            # 0: pelvis
     0, 1, 2, 3,    # 1-4: spine_1 -> spine_2 -> spine_3 -> neck_base
     4, 5,          # 5-6: head -> jaw
-    4, 7, 8, 9, 10, 11, 11,   # 7-13: left front leg
-    4, 14, 15, 16, 17, 18, 18, # 14-20: right front leg
+    3, 7, 8, 9, 10, 11, 11,   # 7-13: left front leg (collar hangs off the torso, not the neck)
+    3, 14, 15, 16, 17, 18, 18, # 14-20: right front leg
     0, 21, 22, 23, 24, 24,    # 21-26: left back leg
     0, 27, 28, 29, 30, 30,    # 27-32: right back leg
     0, 33          # 33-34: tail
 ]
+
+# Bump whenever the generated geometry changes, so cached datasets are regenerated
+GENERATOR_VERSION = 2
 
 FAMILIES = ["felidae", "canidae", "equidae", "bovidae", "hippopotamidae"]
 
@@ -124,26 +127,27 @@ class SMALQuadrupedGenerator:
             parent_idx = PARENT_INDICES[child_idx]
             segments.append((parent_idx, child_idx))
             
-        points_per_seg = max(1, num_points // len(segments))
+        # Radii based on anatomical region
+        radii = []
+        for _, child_idx in segments:
+            if child_idx in [1, 2, 3, 4]:  # spine
+                radii.append(prof["r_body"])
+            elif child_idx in [5, 6]:  # head
+                radii.append(prof["r_body"] * 0.75)
+            elif child_idx in [33, 34]:  # tail
+                radii.append(prof["r_body"] * 0.25)
+            else:
+                radii.append(prof["r_leg"])
         
-        for parent_idx, child_idx in segments:
+        # Allocate points proportionally to each cylinder's lateral area (2*pi*r*L) for uniform surface density
+        lengths = np.array([np.linalg.norm(joints[c] - joints[p]) for p, c in segments])
+        areas = np.array(radii) * lengths
+        seg_counts = self.rng.multinomial(num_points, areas / areas.sum())
+        
+        for (parent_idx, child_idx), radius, points_per_seg in zip(segments, radii, seg_counts):
             p_a = joints[parent_idx]
             p_b = joints[child_idx]
             
-            # Radii based on anatomical region
-            is_spine = child_idx in [1, 2, 3, 4]
-            is_head = child_idx in [5, 6]
-            is_tail = child_idx in [33, 34]
-            
-            if is_spine:
-                radius = prof["r_body"]
-            elif is_head:
-                radius = prof["r_body"] * 0.75
-            elif is_tail:
-                radius = prof["r_body"] * 0.25
-            else:
-                radius = prof["r_leg"]
-                
             # Random position along bone [0, 1]
             u = self.rng.rand(points_per_seg, 1).astype(np.float32)
             bone_centers = (1 - u) * p_a + u * p_b

@@ -18,3 +18,11 @@ def test_creature_dataset_synthesis_and_augmentation():
     assert sample["joints"].shape == (35, 3)
     assert sample["points"].dtype == torch.float32
     assert sample["joints"].dtype == torch.float32
+
+def test_cache_is_invalidated_when_parameters_change(tmp_path):
+    cache_dir = str(tmp_path)
+    CreatureDataset(num_samples_per_family=2, num_points=256, augment=False, cache_dir=cache_dir)
+
+    dataset = CreatureDataset(num_samples_per_family=3, num_points=128, augment=False, cache_dir=cache_dir)
+    assert len(dataset) == 15
+    assert dataset[0]["points"].shape == (128, 3)

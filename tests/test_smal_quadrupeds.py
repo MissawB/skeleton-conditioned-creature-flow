@@ -1,6 +1,6 @@
 # tests/test_smal_quadrupeds.py
 import numpy as np
-from data.smal_quadrupeds import SMALQuadrupedGenerator, JOINT_NAMES, PARENT_INDICES
+from data.smal_quadrupeds import SMALQuadrupedGenerator, JOINT_NAMES, PARENT_INDICES, FAMILIES
 
 def test_smal_quadruped_generator():
     generator = SMALQuadrupedGenerator(seed=42)
@@ -27,3 +27,18 @@ def test_smal_quadruped_generator():
     assert PARENT_INDICES[0] == -1
     for i in range(1, 35):
         assert 0 <= PARENT_INDICES[i] < i
+
+def test_surface_density_is_uniform_between_torso_and_legs():
+    from scipy.spatial import cKDTree
+    generator = SMALQuadrupedGenerator(seed=0)
+    for family in FAMILIES:
+        sample = generator.generate_instance(family=family, num_points=4096)
+        points, joints = sample["points"], sample["joints"]
+
+        # Mean distance to the 8th nearest neighbour is a proxy for local sampling sparsity
+        knn_dist = cKDTree(points).query(points, k=9)[0][:, -1]
+        upper = points[:, 1] > joints[8, 1]  # above the shoulder: torso, neck, head
+        lower = points[:, 1] < joints[9, 1]  # below the elbow: lower legs
+
+        ratio = knn_dist[upper].mean() / knn_dist[lower].mean()
+        assert ratio < 1.35, f"{family}: upper body is {ratio:.2f}x sparser than the legs"
