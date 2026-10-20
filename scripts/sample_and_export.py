@@ -22,7 +22,8 @@ def main():
         hidden_dim=cfg["model"]["hidden_dim"],
         num_layers=cfg["model"]["num_layers"],
         num_heads=cfg["model"]["num_heads"],
-        num_joints=cfg["model"]["num_joints"]
+        num_joints=cfg["model"]["num_joints"],
+        spatial_distance_scale=cfg["model"]["spatial_distance_scale"]
     )
     
     ckpt_dir = cfg["training"]["checkpoint_dir"]

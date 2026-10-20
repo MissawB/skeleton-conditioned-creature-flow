@@ -42,12 +42,16 @@ class AdaLNModulation(nn.Module):
 
 class SpatialCrossAttention(nn.Module):
     """Cross-Attention from 3D points to skeleton joints with spatial distance bias."""
-    def __init__(self, hidden_dim: int, num_heads: int = 8):
+    def __init__(self, hidden_dim: int, num_heads: int = 8, spatial_distance_scale: float = 2.0):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = hidden_dim // num_heads
         self.scale = 1.0 / math.sqrt(self.head_dim)
-        
+
+        # Multi-scale distance bias (ALiBi-style): head h starts at scale * 2^h, learned in log-space
+        init_scales = spatial_distance_scale * 2.0 ** torch.arange(num_heads, dtype=torch.float32)
+        self.log_spatial_scale = nn.Parameter(init_scales.log())
+
         self.q_proj = nn.Linear(hidden_dim, hidden_dim)
         self.k_proj = nn.Linear(hidden_dim, hidden_dim)
         self.v_proj = nn.Linear(hidden_dim, hidden_dim)
@@ -66,7 +70,7 @@ class SpatialCrossAttention(nn.Module):
         
         # Spatial distance bias: penalize distant joints
         dist_sq = torch.cdist(pts_pos, joint_pos, p=2.0) ** 2 # (B, N, K)
-        spatial_bias = -1.5 * dist_sq.unsqueeze(1) # (B, 1, N, K)
+        spatial_bias = -self.log_spatial_scale.exp().view(1, -1, 1, 1) * dist_sq.unsqueeze(1) # (B, heads, N, K)
         
         attn = attn + spatial_bias
         attn = torch.softmax(attn, dim=-1)
@@ -77,13 +81,13 @@ class SpatialCrossAttention(nn.Module):
 
 class PointDiTBlock(nn.Module):
     """Point-DiT block with Self-Attention, Spatial Cross-Attention, and AdaLN modulation."""
-    def __init__(self, hidden_dim: int, num_heads: int = 8):
+    def __init__(self, hidden_dim: int, num_heads: int = 8, spatial_distance_scale: float = 2.0):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_dim, elementwise_affine=False, eps=1e-6)
         self.self_attn = nn.MultiheadAttention(hidden_dim, num_heads, batch_first=True)
         
         self.norm2 = nn.LayerNorm(hidden_dim, elementwise_affine=False, eps=1e-6)
-        self.cross_attn = SpatialCrossAttention(hidden_dim, num_heads)
+        self.cross_attn = SpatialCrossAttention(hidden_dim, num_heads, spatial_distance_scale)
         
         self.norm3 = nn.LayerNorm(hidden_dim, elementwise_affine=False, eps=1e-6)
         self.ffn = nn.Sequential(
@@ -122,19 +126,25 @@ class PointDiT(nn.Module):
         hidden_dim: int = 256,
         num_layers: int = 6,
         num_heads: int = 8,
-        num_joints: int = 35
+        num_joints: int = 35,
+        spatial_distance_scale: float = 2.0
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
-        
+
         self.point_proj = nn.Linear(point_dim, hidden_dim)
         self.time_embedder = TimestepEmbedder(hidden_dim)
         self.skeleton_encoder = SkeletonEncoder(num_joints=num_joints, hidden_dim=hidden_dim)
-        
+
         self.blocks = nn.ModuleList([
-            PointDiTBlock(hidden_dim, num_heads) for _ in range(num_layers)
+            PointDiTBlock(hidden_dim, num_heads, spatial_distance_scale) for _ in range(num_layers)
         ])
-        
+        # Per-block velocity heads refining the clean-shape estimate used for the spatial bias
+        self.pos_heads = nn.ModuleList([nn.Linear(hidden_dim, point_dim) for _ in range(num_layers)])
+        for head in self.pos_heads:
+            nn.init.zeros_(head.weight)
+            nn.init.zeros_(head.bias)
+
         self.final_norm = nn.LayerNorm(hidden_dim)
         self.out_proj = nn.Linear(hidden_dim, point_dim)
         nn.init.zeros_(self.out_proj.weight)
@@ -154,7 +164,11 @@ class PointDiT(nn.Module):
         joint_mem = self.skeleton_encoder(joints)
         
         h = self.point_proj(x_t)
-        for block in self.blocks:
-            h = block(h, t_emb, joint_mem, pts_pos=x_t, joint_pos=joints)
-            
+        # Noisy x_t says little about where a point will land; bias attention with an estimate of x_1 instead
+        pos = x_t
+        remaining = (1.0 - t).view(-1, 1, 1)
+        for block, pos_head in zip(self.blocks, self.pos_heads):
+            h = block(h, t_emb, joint_mem, pts_pos=pos, joint_pos=joints)
+            pos = x_t + remaining * pos_head(h)  # x_1 ≈ x_t + (1 - t) * v
+
         return self.out_proj(self.final_norm(h))
