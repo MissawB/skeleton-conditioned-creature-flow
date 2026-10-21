@@ -49,7 +49,7 @@ def main():
         {"name": "Lion (Felidae)", "type": "pure", "family": "felidae"},
         {"name": "Horse (Equidae)", "type": "pure", "family": "equidae"},
         {"name": "Wolf (Canidae)", "type": "pure", "family": "canidae"},
-        {"name": "Deer (Bovidae)", "type": "pure", "family": "bovidae"},
+        {"name": "Bison (Bovidae)", "type": "pure", "family": "bovidae"},
         {"name": "Chimera (Lion Body + Horse Neck/Head)", "type": "hybrid", "host": "felidae", "donor": "equidae", "junction": "neck_base"}
     ]
     

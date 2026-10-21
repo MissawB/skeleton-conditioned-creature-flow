@@ -70,7 +70,7 @@ Modèle de 10,4 M de paramètres entraîné 30 époques sur 500 créatures (100 
 | Estimation $\hat{x}_1$ seule | $\lambda = 1.5$ | $\hat{x}_1$ | 10/40 (25 %) | 0.0076 |
 | Multi-échelle seul | $2 \to 256$ | $x_t$ | 31/40 (78 %) | 0.0031 |
 | Multi-échelle + $\hat{x}_1$, sans EMA (3 seeds) | $2 \to 256$ | $\hat{x}_1$ | 89 % (82 à 92 %) | 0.0028 |
-| **Modèle final** : idem + EMA (3 seeds) | $2 \to 256$ | $\hat{x}_1$ | **92 %** (90 à 95 %) | **0.0027** |
+| **Modèle retenu** : idem + EMA (3 seeds) | $2 \to 256$ | $\hat{x}_1$ | **92 %** (90 à 95 %) | **0.0027** |
 
 À titre de repère, la Chamfer Distance entre deux créatures réelles d'une même famille va de 0.0005 à 0.0012 (0.0007 en moyenne), et celle d'un modèle non entraîné d'environ 1.9.
 
@@ -78,12 +78,26 @@ Modèle de 10,4 M de paramètres entraîné 30 époques sur 500 créatures (100 
 
 **EMA** : sur 3 runs, les poids moyennés donnent 95 / 90 / 92 %, contre 85 / 82 / 92 % pour le dernier état des poids des mêmes runs. Le gain est modeste (+6 points en moyenne) et réduit surtout les mauvais runs ; la précision des formes ne change pas.
 
+### Ce que le squelette doit montrer
+
+Le modèle ne voit que le squelette. Les bovidés et les équidés se distinguaient surtout par l'épaisseur du corps, qu'aucune articulation n'encodait : le modèle générait des bovidés presque aussi fins que des équidés (rayon médian du torse 0.187, contre 0.238 pour les vraies formes), et la moitié étaient reconnus comme équidés. Les deux dernières versions du générateur corrigent les données, pas le modèle :
+
+| Générateur | Changement | Famille reconnue (3 seeds) | Bovidés | CD vers sa famille |
+|---|---|---|---|---|
+| v2 | (modèle retenu ci-dessus) | 92 % (90 à 95 %) | 17/24 | 0.0027 |
+| v3 | pattes posées sur un même sol | 90 % (90 / 90 / 90) | 13/24 | 0.0026 à 0.0027 |
+| **v4** | écartement des pattes proportionnel à l'épaisseur du corps ; cou des bovidés incliné à 20° (49° pour les autres) | **100 %** (40/40 sur chaque seed) | **24/24** | **0.0026 à 0.0028** |
+
+Sur les vraies formes, l'écart de Chamfer entre un bovidé et la famille la plus proche passe de 0.0020 à 0.0044 : il dépasse maintenant l'erreur du modèle (0.0027), alors qu'il était en dessous. Les autres familles ne perdent rien. Doubler les données (200 formes par famille, générateur v3, un run) réduit la CD à 0.0019 mais laisse 3 bovidés sur 8 confondus : la quantité de données affine les formes, elle ne remplace pas une information absente du squelette.
+
+Le modèle publié et la visionneuse utilisent le générateur v4 (seed 0).
+
 ---
 
 ## ⚠️ Limites
 
 - **Données procédurales, pas SMAL** : les formes sont des cylindres échantillonnés autour d'un squelette paramétrique inspiré de la topologie SMAL, pas le modèle SMAL lui-même (`shape_betas` est inutilisé). La variabilité intra-famille est faible (±3 % sur les proportions).
-- **Bovidés** : reconnus à 17/24 sur les 3 runs (8, 4 et 5 sur 8), confondus avec les équidés, dont les proportions de squelette sont proches. Les quatre autres familles sont reconnues à 95/96.
+- **100 % de reconnaissance, sur un test facile** : avec le générateur v4, les 5 familles sont séparées par construction (proportions, écartement, port de tête) et leur variabilité interne est faible ; ce score mesure que le modèle suit le squelette, pas qu'il généralise à de vrais animaux.
 - **Précision** : les formes générées restent environ 4 fois plus éloignées de leur famille que deux créatures réelles entre elles (0.0027 contre 0.0007).
 - **Greffe** : la jonction aligne le sous-arbre donneur par translation, sans mise à l'échelle ni rotation.
 - **Une seule seed par variante intermédiaire** dans l'ablation. Le modèle final varie de 90 à 95 % selon la seed (3 runs), et l'évaluation sur 40 squelettes a elle-même une incertitude d'environ ±8 points.
@@ -162,7 +176,8 @@ python scripts/evaluate_families.py
 
 ### 6. Export des créatures pour la visionneuse
 ```bash
-python scripts/sample_and_export.py
+python scripts/sample_and_export.py                                        # dernier checkpoint de la config
+python scripts/sample_and_export.py --checkpoint checkpoints/<run>/model_epoch_030.pt
 ```
 
 ### 7. Lancement de la visionneuse 3D
