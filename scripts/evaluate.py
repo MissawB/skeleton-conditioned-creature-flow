@@ -26,8 +26,8 @@ def main():
     )
     ckpt_path = os.path.join(cfg["training"]["checkpoint_dir"], f"model_epoch_{cfg['training']['num_epochs']:03d}.pt")
     if os.path.exists(ckpt_path):
-        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt["model_state"])
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
+        model.load_state_dict(ckpt.get("ema_state", ckpt["model_state"]))
         print(f"Loaded checkpoint from {ckpt_path}")
     else:
         print(f"Warning: no checkpoint at {ckpt_path}, evaluating an untrained model.")

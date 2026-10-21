@@ -29,8 +29,8 @@ def main():
     ckpt_dir = cfg["training"]["checkpoint_dir"]
     ckpt_path = os.path.join(ckpt_dir, f"model_epoch_{cfg['training']['num_epochs']:03d}.pt")
     if os.path.exists(ckpt_path):
-        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt["model_state"])
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
+        model.load_state_dict(ckpt.get("ema_state", ckpt["model_state"]))
         print(f"Loaded checkpoint from {ckpt_path}")
     else:
         print("Note: No trained checkpoint found yet. Using freshly initialized model for demonstration.")
@@ -63,7 +63,8 @@ def main():
             joints = splicer.splice(skel_h, skel_d, junction_joint=spec["junction"])
             
         j_tensor = torch.from_numpy(joints).unsqueeze(0).to(device)
-        traj, _ = fm.sample(j_tensor, num_points=num_points, num_steps=steps, solver=solver, record_trajectory=True)
+        traj, _ = fm.sample(j_tensor, num_points=num_points, num_steps=steps, solver=solver, record_trajectory=True,
+                            guidance_scale=cfg["sampling"].get("guidance_scale", 1.0))
         
         exported.append({
             "name": spec["name"],

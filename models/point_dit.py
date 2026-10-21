@@ -1,6 +1,7 @@
 import math
 import torch
 import torch.nn as nn
+from typing import Optional
 from models.skeleton_encoder import SkeletonEncoder
 
 class TimestepEmbedder(nn.Module):
@@ -57,7 +58,7 @@ class SpatialCrossAttention(nn.Module):
         self.v_proj = nn.Linear(hidden_dim, hidden_dim)
         self.out_proj = nn.Linear(hidden_dim, hidden_dim)
 
-    def forward(self, pts_feat: torch.Tensor, joint_mem: torch.Tensor, pts_pos: torch.Tensor, joint_pos: torch.Tensor) -> torch.Tensor:
+    def forward(self, pts_feat: torch.Tensor, joint_mem: torch.Tensor, pts_pos: torch.Tensor, joint_pos: torch.Tensor, bias_weight: Optional[torch.Tensor] = None) -> torch.Tensor:
         B, N, D = pts_feat.shape
         _, K, _ = joint_mem.shape
         
@@ -71,6 +72,8 @@ class SpatialCrossAttention(nn.Module):
         # Spatial distance bias: penalize distant joints
         dist_sq = torch.cdist(pts_pos, joint_pos, p=2.0) ** 2 # (B, N, K)
         spatial_bias = -self.log_spatial_scale.exp().view(1, -1, 1, 1) * dist_sq.unsqueeze(1) # (B, heads, N, K)
+        if bias_weight is not None:
+            spatial_bias = spatial_bias * bias_weight  # 0 for unconditional samples: joint positions must not leak
         
         attn = attn + spatial_bias
         attn = torch.softmax(attn, dim=-1)
@@ -97,7 +100,7 @@ class PointDiTBlock(nn.Module):
         )
         self.adaln = AdaLNModulation(hidden_dim)
 
-    def forward(self, x: torch.Tensor, t_emb: torch.Tensor, joint_mem: torch.Tensor, pts_pos: torch.Tensor, joint_pos: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t_emb: torch.Tensor, joint_mem: torch.Tensor, pts_pos: torch.Tensor, joint_pos: torch.Tensor, bias_weight: Optional[torch.Tensor] = None) -> torch.Tensor:
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaln(t_emb)
         
         # Self-Attention on points
@@ -107,7 +110,7 @@ class PointDiTBlock(nn.Module):
         x = x + gate_msa.unsqueeze(1) * sa_out
         
         # Spatial Cross-Attention to skeleton joints
-        ca_out = self.cross_attn(self.norm2(x), joint_mem, pts_pos, joint_pos)
+        ca_out = self.cross_attn(self.norm2(x), joint_mem, pts_pos, joint_pos, bias_weight)
         x = x + ca_out
         
         # Feed-Forward Network
@@ -135,6 +138,8 @@ class PointDiT(nn.Module):
         self.point_proj = nn.Linear(point_dim, hidden_dim)
         self.time_embedder = TimestepEmbedder(hidden_dim)
         self.skeleton_encoder = SkeletonEncoder(num_joints=num_joints, hidden_dim=hidden_dim)
+        # Learned "no skeleton" memory for classifier-free guidance
+        self.null_joint_tokens = nn.Parameter(torch.zeros(1, num_joints, hidden_dim))
 
         self.blocks = nn.ModuleList([
             PointDiTBlock(hidden_dim, num_heads, spatial_distance_scale) for _ in range(num_layers)
@@ -150,25 +155,36 @@ class PointDiT(nn.Module):
         nn.init.zeros_(self.out_proj.weight)
         nn.init.zeros_(self.out_proj.bias)
 
-    def forward(self, x_t: torch.Tensor, t: torch.Tensor, joints: torch.Tensor) -> torch.Tensor:
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        # Checkpoints trained before classifier-free guidance have no null tokens
+        state_dict.setdefault(prefix + "null_joint_tokens", self.null_joint_tokens.detach().clone())
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+
+    def forward(self, x_t: torch.Tensor, t: torch.Tensor, joints: torch.Tensor, cond_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Predicts velocity field v_t at point cloud x_t.
         Args:
             x_t: (B, N, 3) 3D points
             t: (B,) continuous timestep in [0, 1]
             joints: (B, K, 3) 3D joint positions
+            cond_mask: optional (B,) bool, False = drop the skeleton condition for that sample
         Returns:
             (B, N, 3) predicted velocities
         """
         t_emb = self.time_embedder(t)
         joint_mem = self.skeleton_encoder(joints)
+        bias_weight = None
+        if cond_mask is not None:
+            keep = cond_mask.to(joint_mem.dtype).view(-1, 1, 1)
+            joint_mem = keep * joint_mem + (1.0 - keep) * self.null_joint_tokens
+            bias_weight = keep.unsqueeze(1)  # (B, 1, 1, 1), broadcast over heads, points and joints
         
         h = self.point_proj(x_t)
         # Noisy x_t says little about where a point will land; bias attention with an estimate of x_1 instead
         pos = x_t
         remaining = (1.0 - t).view(-1, 1, 1)
         for block, pos_head in zip(self.blocks, self.pos_heads):
-            h = block(h, t_emb, joint_mem, pts_pos=pos, joint_pos=joints)
+            h = block(h, t_emb, joint_mem, pts_pos=pos, joint_pos=joints, bias_weight=bias_weight)
             pos = x_t + remaining * pos_head(h)  # x_1 ≈ x_t + (1 - t) * v
 
         return self.out_proj(self.final_norm(h))

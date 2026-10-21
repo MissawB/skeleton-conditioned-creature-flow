@@ -5,8 +5,20 @@ from typing import Tuple, List, Optional
 class OptimalTransportFlowMatching:
     """Optimal Transport Flow Matching (OT-FM) framework with Euler and Heun ODE solvers."""
     
-    def __init__(self, model: nn.Module):
+    def __init__(self, model: nn.Module, cond_drop_prob: float = 0.0):
         self.model = model
+        # Share of training samples whose skeleton is dropped, enabling classifier-free guidance
+        self.cond_drop_prob = cond_drop_prob
+
+    def _velocity(self, x: torch.Tensor, t: torch.Tensor, joints: torch.Tensor, guidance_scale: float) -> torch.Tensor:
+        if guidance_scale == 1.0:
+            return self.model(x, t, joints)
+        # Conditional and unconditional passes in one batch: v = v_uncond + w * (v_cond - v_uncond)
+        B = x.shape[0]
+        cond_mask = torch.cat([torch.ones(B, dtype=torch.bool), torch.zeros(B, dtype=torch.bool)]).to(x.device)
+        v = self.model(torch.cat([x, x]), torch.cat([t, t]), torch.cat([joints, joints]), cond_mask=cond_mask)
+        v_cond, v_uncond = v.chunk(2)
+        return v_uncond + guidance_scale * (v_cond - v_uncond)
 
     def compute_loss(self, x_1: torch.Tensor, joints: torch.Tensor, x_0: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
@@ -28,7 +40,10 @@ class OptimalTransportFlowMatching:
         x_t = (1.0 - t_expand) * x_0 + t_expand * x_1
         target_v = x_1 - x_0
         
-        pred_v = self.model(x_t, t, joints)
+        cond_mask = None
+        if self.cond_drop_prob > 0:
+            cond_mask = torch.rand(B, device=device) >= self.cond_drop_prob
+        pred_v = self.model(x_t, t, joints, cond_mask=cond_mask)
         loss = torch.mean((pred_v - target_v) ** 2)
         return loss
 
@@ -39,10 +54,12 @@ class OptimalTransportFlowMatching:
         num_points: int = 2048,
         num_steps: int = 20,
         solver: str = "heun",
-        record_trajectory: bool = False
+        record_trajectory: bool = False,
+        guidance_scale: float = 1.0
     ) -> Tuple[List[torch.Tensor], torch.Tensor]:
         """
         Integrates dx/dt = v_theta(x, t, joints) from t=0 to t=1.
+        guidance_scale > 1 applies classifier-free guidance (needs a model trained with cond_drop_prob > 0).
         """
         self.model.eval()
         B = joints.shape[0]
@@ -58,13 +75,13 @@ class OptimalTransportFlowMatching:
             t = torch.full((B,), t_val, device=device)
             
             if solver == "euler":
-                v = self.model(x, t, joints)
+                v = self._velocity(x, t, joints, guidance_scale)
                 x = x + dt * v
             elif solver == "heun":
-                v1 = self.model(x, t, joints)
+                v1 = self._velocity(x, t, joints, guidance_scale)
                 x_next_euler = x + dt * v1
                 t_next = torch.full((B,), min(1.0, (i + 1) / num_steps), device=device)
-                v2 = self.model(x_next_euler, t_next, joints)
+                v2 = self._velocity(x_next_euler, t_next, joints, guidance_scale)
                 x = x + 0.5 * dt * (v1 + v2)
             else:
                 raise ValueError(f"Unknown solver {solver}. Choose 'euler' or 'heun'.")

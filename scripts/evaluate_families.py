@@ -22,6 +22,8 @@ def main():
     parser.add_argument("--samples-per-family", type=int, default=8)
     parser.add_argument("--num-steps", type=int, default=None, help="ODE steps (default: config)")
     parser.add_argument("--solver", type=str, default=None, choices=["euler", "heun"], help="ODE solver (default: config)")
+    parser.add_argument("--guidance-scale", type=float, default=None, help="classifier-free guidance scale (default: config)")
+    parser.add_argument("--raw-weights", action="store_true", help="use the last optimizer weights instead of the EMA")
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -38,7 +40,7 @@ def main():
     )
     ckpt_path = args.checkpoint or os.path.join(cfg["training"]["checkpoint_dir"], f"model_epoch_{cfg['training']['num_epochs']:03d}.pt")
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
-    model.load_state_dict(ckpt["model_state"])
+    model.load_state_dict(ckpt["model_state"] if args.raw_weights else ckpt.get("ema_state", ckpt["model_state"]))
     model.to(device)
     print(f"Loaded checkpoint from {ckpt_path}")
     fm = OptimalTransportFlowMatching(model)
@@ -59,7 +61,8 @@ def main():
                 joints,
                 num_points=cfg["data"]["num_points"],
                 num_steps=args.num_steps or cfg["sampling"]["num_steps"],
-                solver=args.solver or cfg["sampling"]["solver"]
+                solver=args.solver or cfg["sampling"]["solver"],
+                guidance_scale=args.guidance_scale or cfg["sampling"].get("guidance_scale", 1.0)
             )
             scores = [np.mean([compute_chamfer_distance(gen_pts, r).item() for r in refs[o]]) for o in FAMILIES]
             confusion[fi, int(np.argmin(scores))] += 1

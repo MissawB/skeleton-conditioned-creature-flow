@@ -29,8 +29,11 @@ training:
   save_every: 5
   device: "cuda"
   checkpoint_dir: "checkpoints"
+  cond_drop_prob: 0.0           # share of samples trained without skeleton (classifier-free guidance)
+  ema_decay: 0.995              # EMA of weights used for sampling (~200 steps, ~6 epochs here)
 
 sampling:
   num_steps: 20
   solver: "heun"
+  guidance_scale: 1.0           # > 1 strengthens skeleton conditioning (needs cond_drop_prob > 0)
   export_dir: "viewer/data"

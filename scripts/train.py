@@ -35,7 +35,7 @@ def main():
         num_joints=cfg["model"]["num_joints"],
         spatial_distance_scale=cfg["model"]["spatial_distance_scale"]
     )
-    fm = OptimalTransportFlowMatching(model)
+    fm = OptimalTransportFlowMatching(model, cond_drop_prob=cfg["training"].get("cond_drop_prob", 0.0))
     
     trainer = Trainer(
         flow_matching=fm,
@@ -44,7 +44,8 @@ def main():
         lr=cfg["training"]["learning_rate"],
         weight_decay=cfg["training"]["weight_decay"],
         checkpoint_dir=cfg["training"]["checkpoint_dir"],
-        device=cfg["training"]["device"]
+        device=cfg["training"]["device"],
+        ema_decay=cfg["training"].get("ema_decay", 0.995)
     )
     
     epochs = cfg["training"]["num_epochs"]
