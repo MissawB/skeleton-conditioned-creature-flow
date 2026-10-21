@@ -28,6 +28,18 @@ def test_smal_quadruped_generator():
     for i in range(1, 35):
         assert 0 <= PARENT_INDICES[i] < i
 
+def test_limbs_point_downward_to_level_ground():
+    generator = SMALQuadrupedGenerator(seed=0)
+    for family in FAMILIES:
+        for _ in range(5):
+            j = generator.generate_instance(family=family, num_points=256)["joints"]
+            for upper, lower in [(10, 11), (17, 18), (23, 24), (29, 30)]:  # wrist/ankle -> paw
+                assert j[lower, 1] < j[upper, 1], f"{family}: paw {lower} is above joint {upper}"
+            for paw, toes in [(11, (12, 13)), (18, (19, 20)), (24, (25, 26)), (30, (31, 32))]:
+                assert all(j[t, 1] <= j[paw, 1] for t in toes), f"{family}: toes above paw {paw}"
+            toe_heights = j[[12, 13, 19, 20, 25, 26, 31, 32], 1]
+            assert np.ptp(toe_heights) < 0.03, f"{family}: front and back feet are not on the same ground"
+
 def test_surface_density_is_uniform_between_torso_and_legs():
     from scipy.spatial import cKDTree
     generator = SMALQuadrupedGenerator(seed=0)

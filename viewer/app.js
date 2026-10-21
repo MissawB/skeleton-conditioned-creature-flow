@@ -38,7 +38,7 @@ function init() {
   scene.add(dirLight);
 
   const grid = new THREE.GridHelper(4, 20, 0x1e293b, 0x0f172a);
-  grid.position.y = -0.6;
+  grid.position.y = -0.37;
   scene.add(grid);
 
   skeletonGroup = new THREE.Group();

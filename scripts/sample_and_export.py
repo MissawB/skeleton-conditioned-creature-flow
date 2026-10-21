@@ -2,6 +2,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import argparse
 import json
 import yaml
 import torch
@@ -12,8 +13,12 @@ from models.point_dit import PointDiT
 from models.flow_matching import OptimalTransportFlowMatching
 
 def main():
-    cfg_path = "configs/default_config.yaml"
-    with open(cfg_path, "r", encoding="utf-8") as f:
+    parser = argparse.ArgumentParser(description="Sample creatures and export flow trajectories for the viewer.")
+    parser.add_argument("--config", type=str, default="configs/default_config.yaml")
+    parser.add_argument("--checkpoint", type=str, default=None)
+    args = parser.parse_args()
+
+    with open(args.config, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
         
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -26,8 +31,8 @@ def main():
         spatial_distance_scale=cfg["model"]["spatial_distance_scale"]
     )
     
-    ckpt_dir = cfg["training"]["checkpoint_dir"]
-    ckpt_path = os.path.join(ckpt_dir, f"model_epoch_{cfg['training']['num_epochs']:03d}.pt")
+    ckpt_path = args.checkpoint or os.path.join(cfg["training"]["checkpoint_dir"],
+                                                f"model_epoch_{cfg['training']['num_epochs']:03d}.pt")
     if os.path.exists(ckpt_path):
         ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
         model.load_state_dict(ckpt.get("ema_state", ckpt["model_state"]))

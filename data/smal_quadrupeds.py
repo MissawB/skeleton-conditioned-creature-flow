@@ -39,7 +39,7 @@ PARENT_INDICES = [
 ]
 
 # Bump whenever the generated geometry changes, so cached datasets are regenerated
-GENERATOR_VERSION = 2
+GENERATOR_VERSION = 3
 
 FAMILIES = ["felidae", "canidae", "equidae", "bovidae", "hippopotamidae"]
 
@@ -82,6 +82,9 @@ class SMALQuadrupedGenerator:
         joints[5] = [joints[4, 0] + neck_len * 0.6, joints[4, 1] + neck_len * 0.7, 0.0]
         joints[6] = [joints[5, 0] + head_len * 0.7, joints[5, 1] - 0.05, 0.0]
         
+        # Ground level: paws sit one leg length below the shoulder, so longer legs reach lower
+        ground_y = joints[4, 1] - 0.15 - leg_len
+        
         # Front legs
         for side, sign in [("l", 1.0), ("r", -1.0)]:
             idx = 7 if side == "l" else 14
@@ -90,9 +93,9 @@ class SMALQuadrupedGenerator:
             joints[idx + 1] = [joints[idx, 0], joints[idx, 1] - 0.1, w]           # shoulder
             joints[idx + 2] = [joints[idx + 1, 0], joints[idx + 1, 1] - leg_len * 0.4, w * 0.9] # elbow
             joints[idx + 3] = [joints[idx + 2, 0], joints[idx + 2, 1] - leg_len * 0.4, w * 0.85] # wrist
-            joints[idx + 4] = [joints[idx + 3, 0] + 0.03, -0.45, w * 0.85]        # paw
-            joints[idx + 5] = [joints[idx + 4, 0] + 0.04, -0.47, w * 0.75]        # toe 1
-            joints[idx + 6] = [joints[idx + 4, 0] + 0.04, -0.47, w * 0.95]        # toe 2
+            joints[idx + 4] = [joints[idx + 3, 0] + 0.03, ground_y, w * 0.85]      # paw
+            joints[idx + 5] = [joints[idx + 4, 0] + 0.04, ground_y - 0.02, w * 0.75] # toe 1
+            joints[idx + 6] = [joints[idx + 4, 0] + 0.04, ground_y - 0.02, w * 0.95] # toe 2
             
         # Back legs
         for side, sign in [("l", 1.0), ("r", -1.0)]:
@@ -101,9 +104,9 @@ class SMALQuadrupedGenerator:
             joints[idx]     = [joints[0, 0] + 0.02, joints[0, 1] - 0.05, w]      # hip
             joints[idx + 1] = [joints[idx, 0] - 0.05, joints[idx, 1] - leg_len * 0.35, w * 0.95] # knee
             joints[idx + 2] = [joints[idx + 1, 0] + 0.03, joints[idx + 1, 1] - leg_len * 0.4, w * 0.9] # ankle
-            joints[idx + 3] = [joints[idx + 2, 0] + 0.02, -0.45, w * 0.85]       # paw
-            joints[idx + 4] = [joints[idx + 3, 0] + 0.04, -0.47, w * 0.75]       # toe 1
-            joints[idx + 5] = [joints[idx + 3, 0] + 0.04, -0.47, w * 0.95]       # toe 2
+            joints[idx + 3] = [joints[idx + 2, 0] + 0.02, ground_y, w * 0.85]     # paw
+            joints[idx + 4] = [joints[idx + 3, 0] + 0.04, ground_y - 0.02, w * 0.75] # toe 1
+            joints[idx + 5] = [joints[idx + 3, 0] + 0.04, ground_y - 0.02, w * 0.95] # toe 2
             
         # Tail
         joints[33] = [joints[0, 0] - tail_len * 0.5, joints[0, 1] + 0.05, 0.0]
