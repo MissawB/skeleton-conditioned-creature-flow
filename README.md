@@ -2,8 +2,10 @@
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-orange.svg)](https://pytorch.org/)
-[![Three.js](https://img.shields.io/badge/Three.js-r128-black.svg)](https://threejs.org/)
+[![Three.js](https://img.shields.io/badge/Three.js-r170-black.svg)](https://threejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Demo](https://img.shields.io/badge/%F0%9F%A4%97%20Space-Demo-yellow)](https://huggingface.co/spaces/MissawB/creature-flow-viewer)
+[![Collection](https://img.shields.io/badge/%F0%9F%A4%97%20Collection-model%20%C2%B7%20dataset-yellow)](https://huggingface.co/collections/MissawB/skeleton-conditioned-creature-flow-6ad8fe174913aa4ba69dd554)
 
 Projet de recherche et portfolio en Deep Learning géométrique 3D : génération de nuages de points de quadrupèdes conditionnée par un squelette cinématique ($K=35$ articulations), et synthèse d'hybrides chimériques par greffe de sous-arbres du squelette. Le modèle génératif est un **Flow Matching à chemins de transport optimal conditionnel (OT-FM)** avec un backbone **Point-DiT**.
 
@@ -109,7 +111,8 @@ Modèle de 10,4 M de paramètres entraîné 30 époques sur 500 créatures (100 
 ├── viewer/
 │   ├── index.html                # Visionneuse 3D HTML5
 │   ├── app.js                    # Contrôles Three.js (caméra, curseur t, rendu)
-│   ├── style.css                 # Interface sombre
+│   ├── style.css                 # Thème « bocal de formol »
+│   ├── favicon.svg               # Icône (squelette ocre)
 │   └── data/                     # Trajectoires exportées (creatures.json)
 ├── scripts/
 │   ├── prepare_data.py           # Génération et mise en cache du dataset
