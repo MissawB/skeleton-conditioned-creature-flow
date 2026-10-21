@@ -9,6 +9,8 @@ data:
     - bovidae
     - hippopotamidae
   cache_dir: "data/cache"
+  ot_noise_per_sample: 0        # OT-matched noise draws precomputed per shape (0 = independent coupling)
+  independent_noise_prob: 0.2   # hybrid coupling: share of independent noise during training
 
 model:
   point_dim: 3

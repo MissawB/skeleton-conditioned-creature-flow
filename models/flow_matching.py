@@ -8,17 +8,19 @@ class OptimalTransportFlowMatching:
     def __init__(self, model: nn.Module):
         self.model = model
 
-    def compute_loss(self, x_1: torch.Tensor, joints: torch.Tensor) -> torch.Tensor:
+    def compute_loss(self, x_1: torch.Tensor, joints: torch.Tensor, x_0: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Computes MSE loss along linear OT interpolants:
         x_t = (1 - t) * x_0 + t * x_1
         Target velocity u_t = x_1 - x_0
+        x_0 may be supplied pre-coupled to x_1 (per-shape OT); otherwise it is drawn independently.
         """
         B, N, _ = x_1.shape
         device = x_1.device
         
         # Sample x_0 ~ N(0, I) and t ~ U[0, 1]
-        x_0 = torch.randn_like(x_1)
+        if x_0 is None:
+            x_0 = torch.randn_like(x_1)
         t = torch.rand(B, device=device)
         
         # OT interpolation

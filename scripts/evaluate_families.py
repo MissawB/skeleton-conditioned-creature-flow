@@ -20,6 +20,8 @@ def main():
     parser.add_argument("--config", type=str, default="configs/default_config.yaml")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--samples-per-family", type=int, default=8)
+    parser.add_argument("--num-steps", type=int, default=None, help="ODE steps (default: config)")
+    parser.add_argument("--solver", type=str, default=None, choices=["euler", "heun"], help="ODE solver (default: config)")
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -53,7 +55,12 @@ def main():
     for fi, family in enumerate(FAMILIES):
         for _ in range(n):
             joints = to_tensor(generator.generate_instance(family)["joints"])
-            _, gen_pts = fm.sample(joints, num_points=cfg["data"]["num_points"], num_steps=cfg["sampling"]["num_steps"], solver=cfg["sampling"]["solver"])
+            _, gen_pts = fm.sample(
+                joints,
+                num_points=cfg["data"]["num_points"],
+                num_steps=args.num_steps or cfg["sampling"]["num_steps"],
+                solver=args.solver or cfg["sampling"]["solver"]
+            )
             scores = [np.mean([compute_chamfer_distance(gen_pts, r).item() for r in refs[o]]) for o in FAMILIES]
             confusion[fi, int(np.argmin(scores))] += 1
             own_cd.append(scores[fi])

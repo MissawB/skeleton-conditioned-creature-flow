@@ -66,11 +66,11 @@ Modèle de 10,4 M de paramètres entraîné 30 époques sur 500 créatures (100 
 | Biais fixe (version initiale) | $\lambda = 1.5$ | $x_t$ | 16/40 (40 %) | 0.0060 |
 | Estimation $\hat{x}_1$ seule | $\lambda = 1.5$ | $\hat{x}_1$ | 10/40 (25 %) | 0.0076 |
 | Multi-échelle seul | $2 \to 256$ | $x_t$ | 31/40 (78 %) | 0.0031 |
-| **Modèle final** | $2 \to 256$ | $\hat{x}_1$ | **37/40 (92 %)** | **0.0029** |
+| **Modèle final** (3 seeds) | $2 \to 256$ | $\hat{x}_1$ | **89 %** (82 à 92 %) | **0.0028** |
 
 À titre de repère, la Chamfer Distance entre deux créatures réelles d'une même famille va de 0.0005 à 0.0012 (0.0007 en moyenne), et celle d'un modèle non entraîné d'environ 1.9.
 
-**Lecture de l'ablation** : le biais multi-échelle explique l'essentiel du gain. Avec un $\lambda$ unique et faible, le biais est presque plat à l'échelle des créatures et le modèle produit un « quadrupède moyen ». L'estimation $\hat{x}_1$ n'apporte rien seule, et le gain qu'elle semble ajouter au multi-échelle (de 78 % à 92 %) repose sur un seul entraînement par variante : c'est plausible, pas démontré.
+**Lecture de l'ablation** : le biais multi-échelle explique l'essentiel du gain. Avec un $\lambda$ unique et faible, le biais est presque plat à l'échelle des créatures et le modèle produit un « quadrupède moyen ». L'estimation $\hat{x}_1$ n'apporte rien seule. Combinée au multi-échelle, elle semble ajouter environ 10 points (78 % sur un run, contre 82 à 92 % sur trois runs du modèle final) ; les variantes intermédiaires n'ont qu'un run chacune, donc ce gain reste à confirmer.
 
 ---
 
@@ -80,7 +80,8 @@ Modèle de 10,4 M de paramètres entraîné 30 époques sur 500 créatures (100 
 - **Bovidés** : reconnus à 5/8 seulement, confondus avec les équidés, dont les proportions de squelette sont proches.
 - **Précision** : les formes générées restent environ 4 fois plus éloignées de leur famille que deux créatures réelles entre elles (0.0029 contre 0.0007).
 - **Greffe** : la jonction aligne le sous-arbre donneur par translation, sans mise à l'échelle ni rotation.
-- **Une seule seed par variante** dans l'ablation (bruit d'environ ±7 points de pourcentage sur 40 exemples).
+- **Une seule seed par variante intermédiaire** dans l'ablation. Le modèle final varie de 82 à 92 % selon la seed (3 runs).
+- **Le couplage OT par forme n'aide pas encore** (`ot_noise_per_sample` dans la config, désactivé par défaut) : il rend l'échantillonnage en 2 à 5 pas bien meilleur (CD 0.0063 en 2 pas, contre 0.049), mais fait tomber la reconnaissance de famille à 42 % en 20 pas, avec 20 % comme avec 50 % de bruit indépendant.
 
 ---
 

@@ -34,9 +34,10 @@ class Trainer:
         for batch in self.dataloader:
             pts = batch["points"].to(self.device)
             jts = batch["joints"].to(self.device)
+            noise = batch["noise"].to(self.device) if "noise" in batch else None
             
             self.optimizer.zero_grad()
-            loss = self.fm.compute_loss(pts, jts)
+            loss = self.fm.compute_loss(pts, jts, x_0=noise)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.fm.model.parameters(), max_norm=1.0)
             self.optimizer.step()

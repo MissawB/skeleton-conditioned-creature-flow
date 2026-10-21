@@ -22,7 +22,9 @@ def main():
         num_samples_per_family=cfg["data"]["num_samples_per_family"],
         num_points=cfg["data"]["num_points"],
         augment=True,
-        cache_dir=cfg["data"]["cache_dir"]
+        cache_dir=cfg["data"]["cache_dir"],
+        ot_noise_per_sample=cfg["data"].get("ot_noise_per_sample", 0),
+        independent_noise_prob=cfg["data"].get("independent_noise_prob", 0.0)
     )
     
     model = PointDiT(
