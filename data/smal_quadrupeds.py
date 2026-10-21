@@ -39,7 +39,7 @@ PARENT_INDICES = [
 ]
 
 # Bump whenever the generated geometry changes, so cached datasets are regenerated
-GENERATOR_VERSION = 3
+GENERATOR_VERSION = 4
 
 FAMILIES = ["felidae", "canidae", "equidae", "bovidae", "hippopotamidae"]
 
@@ -49,13 +49,13 @@ class SMALQuadrupedGenerator:
     def __init__(self, seed: int = 42):
         self.rng = np.random.RandomState(seed)
         
-        # Family base proportions [spine_len, leg_len, neck_len, body_thickness, leg_thickness]
+        # Family base proportions: bone lengths, body/leg radii and neck elevation (degrees above horizontal)
         self.family_profiles = {
-            "felidae": {"spine": 0.55, "leg": 0.45, "neck": 0.20, "head": 0.18, "r_body": 0.16, "r_leg": 0.05, "tail": 0.35},
-            "canidae": {"spine": 0.50, "leg": 0.48, "neck": 0.22, "head": 0.22, "r_body": 0.15, "r_leg": 0.045, "tail": 0.25},
-            "equidae": {"spine": 0.60, "leg": 0.65, "neck": 0.38, "head": 0.26, "r_body": 0.20, "r_leg": 0.055, "tail": 0.20},
-            "bovidae": {"spine": 0.58, "leg": 0.52, "neck": 0.25, "head": 0.24, "r_body": 0.24, "r_leg": 0.065, "tail": 0.20},
-            "hippopotamidae": {"spine": 0.62, "leg": 0.35, "neck": 0.15, "head": 0.28, "r_body": 0.32, "r_leg": 0.09, "tail": 0.15},
+            "felidae": {"spine": 0.55, "leg": 0.45, "neck": 0.20, "head": 0.18, "r_body": 0.16, "r_leg": 0.05, "tail": 0.35, "neck_angle": 49},
+            "canidae": {"spine": 0.50, "leg": 0.48, "neck": 0.22, "head": 0.22, "r_body": 0.15, "r_leg": 0.045, "tail": 0.25, "neck_angle": 49},
+            "equidae": {"spine": 0.60, "leg": 0.65, "neck": 0.38, "head": 0.26, "r_body": 0.20, "r_leg": 0.055, "tail": 0.20, "neck_angle": 49},
+            "bovidae": {"spine": 0.58, "leg": 0.52, "neck": 0.25, "head": 0.24, "r_body": 0.24, "r_leg": 0.065, "tail": 0.20, "neck_angle": 20},
+            "hippopotamidae": {"spine": 0.62, "leg": 0.35, "neck": 0.15, "head": 0.28, "r_body": 0.32, "r_leg": 0.09, "tail": 0.15, "neck_angle": 49},
         }
 
     def _build_skeleton(self, family: str, variance: float = 0.03) -> np.ndarray:
@@ -79,16 +79,22 @@ class SMALQuadrupedGenerator:
         joints[4] = [spine_len * 0.45, 0.08, 0.0] # neck_base
         
         # 5-6: Head & Jaw
-        joints[5] = [joints[4, 0] + neck_len * 0.6, joints[4, 1] + neck_len * 0.7, 0.0]
+        # The neck length is kept from the original (0.6, 0.7) direction, only its elevation changes per family
+        neck_angle = np.radians(prof["neck_angle"])
+        neck_reach = neck_len * np.hypot(0.6, 0.7)
+        joints[5] = [joints[4, 0] + neck_reach * np.cos(neck_angle), joints[4, 1] + neck_reach * np.sin(neck_angle), 0.0]
         joints[6] = [joints[5, 0] + head_len * 0.7, joints[5, 1] - 0.05, 0.0]
         
+        # Legs stand wider under a thicker body, so body thickness is visible in the skeleton
+        stance = prof["r_body"] / 0.20
+
         # Ground level: paws sit one leg length below the shoulder, so longer legs reach lower
         ground_y = joints[4, 1] - 0.15 - leg_len
         
         # Front legs
         for side, sign in [("l", 1.0), ("r", -1.0)]:
             idx = 7 if side == "l" else 14
-            w = 0.12 * sign
+            w = 0.12 * stance * sign
             joints[idx]     = [joints[4, 0] * 0.9, joints[4, 1] - 0.05, w * 0.6]  # collar
             joints[idx + 1] = [joints[idx, 0], joints[idx, 1] - 0.1, w]           # shoulder
             joints[idx + 2] = [joints[idx + 1, 0], joints[idx + 1, 1] - leg_len * 0.4, w * 0.9] # elbow
@@ -100,7 +106,7 @@ class SMALQuadrupedGenerator:
         # Back legs
         for side, sign in [("l", 1.0), ("r", -1.0)]:
             idx = 21 if side == "l" else 27
-            w = 0.14 * sign
+            w = 0.14 * stance * sign
             joints[idx]     = [joints[0, 0] + 0.02, joints[0, 1] - 0.05, w]      # hip
             joints[idx + 1] = [joints[idx, 0] - 0.05, joints[idx, 1] - leg_len * 0.35, w * 0.95] # knee
             joints[idx + 2] = [joints[idx + 1, 0] + 0.03, joints[idx + 1, 1] - leg_len * 0.4, w * 0.9] # ankle

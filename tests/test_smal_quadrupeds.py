@@ -54,3 +54,29 @@ def test_surface_density_is_uniform_between_torso_and_legs():
 
         ratio = knn_dist[upper].mean() / knn_dist[lower].mean()
         assert ratio < 1.35, f"{family}: upper body is {ratio:.2f}x sparser than the legs"
+
+def _neck_angle_deg(j):
+    d = j[5] - j[4]  # neck_base -> head
+    return np.degrees(np.arctan2(d[1], d[0]))
+
+def _stance_ratio(j):
+    # shoulder width relative to pelvis -> neck_base length (scale-invariant)
+    return np.linalg.norm(j[8] - j[15]) / np.linalg.norm(j[4] - j[0])
+
+def test_bovidae_skeleton_differs_from_equidae():
+    """Body thickness and head carriage must be visible in the skeleton, the model's only input."""
+    generator = SMALQuadrupedGenerator(seed=0)
+    stats = {f: [] for f in ["equidae", "bovidae"]}
+    for family in stats:
+        for _ in range(10):
+            j = generator.generate_instance(family=family, num_points=256)["joints"]
+            stats[family].append((_neck_angle_deg(j), _stance_ratio(j)))
+    eq, bov = np.array(stats["equidae"]), np.array(stats["bovidae"])
+    assert bov[:, 0].max() < eq[:, 0].min() - 15, "bovidae should carry the head much lower than equidae"
+    assert bov[:, 1].min() > eq[:, 1].max(), "bovidae should stand wider (thicker body) than equidae"
+
+def test_stance_widens_with_body_thickness():
+    generator = SMALQuadrupedGenerator(seed=0)
+    ratio = {f: np.mean([_stance_ratio(generator.generate_instance(family=f, num_points=256)["joints"]) for _ in range(10)])
+             for f in ["equidae", "bovidae", "hippopotamidae"]}
+    assert ratio["equidae"] < ratio["bovidae"] < ratio["hippopotamidae"]
