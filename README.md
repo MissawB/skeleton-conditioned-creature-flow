@@ -19,6 +19,7 @@ Projet de recherche et portfolio en Deep Learning géométrique 3D : génératio
 - **Point-DiT** : modulation temporelle AdaLN-Zero, self-attention sur les points, et **cross-attention spatiale points $\to$ squelette** avec un biais de distance multi-échelle (voir [Conditionnement par le squelette](#-conditionnement-par-le-squelette)).
 - **Squelette cinématique à 35 articulations inspiré de SMAL**, pour 5 familles : félins, canidés, équidés, bovidés, hippopotamidés.
 - **Greffe cinématique d'hybrides** : un sous-arbre du squelette donneur (par ex. cou et tête) est recollé sur l'hôte au niveau de l'articulation de jonction.
+- **Moyenne mobile des poids (EMA)** pour la génération, et **guidage sans classifieur (CFG)** optionnel.
 - **Visionneuse Web 3D (Three.js)** : inspection des nuages de points et du squelette, et animation du flux $t = 0 \to 1$.
 - **100 % PyTorch** : pas d'extension C++/CUDA à compiler (ni PyTorch3D ni DGL).
 
@@ -57,7 +58,7 @@ $$\text{score}_{h}(i, k) = \frac{q_i \cdot k_k}{\sqrt{d}} - \lambda_h \, \| \hat
 
 ## 📊 Résultats
 
-Modèle de 10,4 M de paramètres entraîné 30 époques sur 500 créatures (100 par famille), soit environ 16 min sur une RTX 4060 Laptop (pic mémoire de 5,6 Go).
+Modèle de 10,4 M de paramètres entraîné 30 époques sur 500 créatures (100 par famille), soit environ 16 min sur une RTX 4060 Laptop (pic mémoire de 5,6 Go). La génération utilise une moyenne mobile exponentielle des poids (EMA, décroissance 0.995, soit un horizon d'environ 6 époques) plutôt que leur dernier état.
 
 **Protocole** (`scripts/evaluate_families.py`) : 40 squelettes jamais vus (8 par famille, seed disjointe de l'entraînement). Chaque créature générée est attribuée à la famille dont les 8 formes réelles de référence sont en moyenne les plus proches en Chamfer Distance.
 
@@ -66,22 +67,25 @@ Modèle de 10,4 M de paramètres entraîné 30 époques sur 500 créatures (100 
 | Biais fixe (version initiale) | $\lambda = 1.5$ | $x_t$ | 16/40 (40 %) | 0.0060 |
 | Estimation $\hat{x}_1$ seule | $\lambda = 1.5$ | $\hat{x}_1$ | 10/40 (25 %) | 0.0076 |
 | Multi-échelle seul | $2 \to 256$ | $x_t$ | 31/40 (78 %) | 0.0031 |
-| **Modèle final** (3 seeds) | $2 \to 256$ | $\hat{x}_1$ | **89 %** (82 à 92 %) | **0.0028** |
+| Multi-échelle + $\hat{x}_1$, sans EMA (3 seeds) | $2 \to 256$ | $\hat{x}_1$ | 89 % (82 à 92 %) | 0.0028 |
+| **Modèle final** : idem + EMA (3 seeds) | $2 \to 256$ | $\hat{x}_1$ | **92 %** (90 à 95 %) | **0.0027** |
 
 À titre de repère, la Chamfer Distance entre deux créatures réelles d'une même famille va de 0.0005 à 0.0012 (0.0007 en moyenne), et celle d'un modèle non entraîné d'environ 1.9.
 
 **Lecture de l'ablation** : le biais multi-échelle explique l'essentiel du gain. Avec un $\lambda$ unique et faible, le biais est presque plat à l'échelle des créatures et le modèle produit un « quadrupède moyen ». L'estimation $\hat{x}_1$ n'apporte rien seule. Combinée au multi-échelle, elle semble ajouter environ 10 points (78 % sur un run, contre 82 à 92 % sur trois runs du modèle final) ; les variantes intermédiaires n'ont qu'un run chacune, donc ce gain reste à confirmer.
+
+**EMA** : sur 3 runs, les poids moyennés donnent 95 / 90 / 92 %, contre 85 / 82 / 92 % pour le dernier état des poids des mêmes runs. Le gain est modeste (+6 points en moyenne) et réduit surtout les mauvais runs ; la précision des formes ne change pas.
 
 ---
 
 ## ⚠️ Limites
 
 - **Données procédurales, pas SMAL** : les formes sont des cylindres échantillonnés autour d'un squelette paramétrique inspiré de la topologie SMAL, pas le modèle SMAL lui-même (`shape_betas` est inutilisé). La variabilité intra-famille est faible (±3 % sur les proportions).
-- **Bovidés** : reconnus à 5/8 seulement, confondus avec les équidés, dont les proportions de squelette sont proches.
-- **Précision** : les formes générées restent environ 4 fois plus éloignées de leur famille que deux créatures réelles entre elles (0.0029 contre 0.0007).
+- **Bovidés** : reconnus à 17/24 sur les 3 runs (8, 4 et 5 sur 8), confondus avec les équidés, dont les proportions de squelette sont proches. Les quatre autres familles sont reconnues à 95/96.
+- **Précision** : les formes générées restent environ 4 fois plus éloignées de leur famille que deux créatures réelles entre elles (0.0027 contre 0.0007).
 - **Greffe** : la jonction aligne le sous-arbre donneur par translation, sans mise à l'échelle ni rotation.
-- **Une seule seed par variante intermédiaire** dans l'ablation. Le modèle final varie de 82 à 92 % selon la seed (3 runs).
-- **Le couplage OT par forme n'aide pas encore** (`ot_noise_per_sample` dans la config, désactivé par défaut) : il rend l'échantillonnage en 2 à 5 pas bien meilleur (CD 0.0063 en 2 pas, contre 0.049), mais fait tomber la reconnaissance de famille à 42 % en 20 pas, avec 20 % comme avec 50 % de bruit indépendant.
+- **Une seule seed par variante intermédiaire** dans l'ablation. Le modèle final varie de 90 à 95 % selon la seed (3 runs), et l'évaluation sur 40 squelettes a elle-même une incertitude d'environ ±8 points.
+- **Le couplage OT par forme n'aide pas encore** (`ot_noise_per_sample` dans la config, désactivé par défaut) : il rend l'échantillonnage en 2 à 5 pas bien meilleur (CD 0.0063 en 2 pas, contre 0.049), mais fait tomber la reconnaissance de famille à 42 % en 20 pas, avec 20 % comme avec 50 % de bruit indépendant. Le guidage sans classifieur (`cond_drop_prob: 0.1` à l'entraînement, `guidance_scale` à la génération) remonte ce score à 55–60 % pour $w$ entre 1.5 et 2 (un seul run), encore loin du modèle final ; à partir de $w = 2.5$, les formes se dégradent.
 
 ---
 
