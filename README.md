@@ -132,6 +132,7 @@ Le modèle publié et la visionneuse utilisent le générateur v4 (seed 0).
 │   ├── prepare_data.py           # Génération et mise en cache du dataset
 │   ├── train.py                  # Entraînement
 │   ├── sample_and_export.py      # Génération de trajectoires & export JSON pour la visionneuse
+│   ├── plot_creatures.py         # Image du README à partir des créatures exportées
 │   ├── evaluate.py               # Chamfer Distance & couverture du squelette
 │   └── evaluate_families.py      # Reconnaissance de famille & matrice de confusion
 ├── tests/                        # Tests unitaires et test d'overfit (pytest)
@@ -178,6 +179,7 @@ python scripts/evaluate_families.py
 ```bash
 python scripts/sample_and_export.py                                        # dernier checkpoint de la config
 python scripts/sample_and_export.py --checkpoint checkpoints/<run>/model_epoch_030.pt
+python scripts/plot_creatures.py                                          # régénère docs/images/creatures.png
 ```
 
 ### 7. Lancement de la visionneuse 3D
