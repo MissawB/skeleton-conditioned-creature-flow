@@ -130,10 +130,13 @@ class PointDiT(nn.Module):
         num_layers: int = 6,
         num_heads: int = 8,
         num_joints: int = 35,
-        spatial_distance_scale: float = 2.0
+        spatial_distance_scale: float = 2.0,
+        data_scale: float = 1.0
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
+        # Coordinates are multiplied by data_scale before entering the network (saved with the weights)
+        self.register_buffer("data_scale", torch.tensor(float(data_scale)))
 
         self.point_proj = nn.Linear(point_dim, hidden_dim)
         self.time_embedder = TimestepEmbedder(hidden_dim)
@@ -158,6 +161,8 @@ class PointDiT(nn.Module):
     def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
         # Checkpoints trained before classifier-free guidance have no null tokens
         state_dict.setdefault(prefix + "null_joint_tokens", self.null_joint_tokens.detach().clone())
+        # ... and checkpoints trained before data scaling worked in data units
+        state_dict.setdefault(prefix + "data_scale", torch.tensor(1.0))
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def forward(self, x_t: torch.Tensor, t: torch.Tensor, joints: torch.Tensor, cond_mask: Optional[torch.Tensor] = None) -> torch.Tensor:

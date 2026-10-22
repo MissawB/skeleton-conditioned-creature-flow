@@ -33,7 +33,9 @@ def main():
         num_layers=cfg["model"]["num_layers"],
         num_heads=cfg["model"]["num_heads"],
         num_joints=cfg["model"]["num_joints"],
-        spatial_distance_scale=cfg["model"]["spatial_distance_scale"]
+        # Distances grow with data_scale, so the bias scale shrinks by its square to keep the same attention
+        spatial_distance_scale=cfg["model"]["spatial_distance_scale"] / cfg["model"].get("data_scale", 1.0) ** 2,
+        data_scale=cfg["model"].get("data_scale", 1.0)
     )
     fm = OptimalTransportFlowMatching(model, cond_drop_prob=cfg["training"].get("cond_drop_prob", 0.0))
     

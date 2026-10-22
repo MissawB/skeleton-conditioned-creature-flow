@@ -90,7 +90,25 @@ Le modèle ne voit que le squelette. Les bovidés et les équidés se distinguai
 
 Sur les vraies formes, l'écart de Chamfer entre un bovidé et la famille la plus proche passe de 0.0020 à 0.0044 : il dépasse maintenant l'erreur du modèle (0.0027), alors qu'il était en dessous. Les autres familles ne perdent rien. Doubler les données (200 formes par famille, générateur v3, un run) réduit la CD à 0.0019 mais laisse 3 bovidés sur 8 confondus : la quantité de données affine les formes, elle ne remplace pas une information absente du squelette.
 
-Le modèle publié et la visionneuse utilisent le générateur v4 (seed 0).
+### Échelle des coordonnées
+
+Les créatures sont normalisées dans la boule unité, donc leurs points ont un écart-type d'environ 0.25, alors que le bruit de départ a un écart-type de 1. Le modèle passe ainsi l'essentiel de la trajectoire à contracter le nuage, et les surfaces générées sont épaisses : les points s'écartent de la surface réelle d'environ 0.013 en médiane (0.0004 sur les vraies formes), avec un biais vers l'extérieur. Avec `data_scale: 4` (config), les points et les articulations sont multipliés par 4 à l'intérieur du flow puis divisés à la sortie (le biais de distance est corrigé de $1/4^2$), ce qui rapproche l'échelle des données de celle du bruit, à la manière du $\sigma_{data}$ d'EDM.
+
+En plus de la reconnaissance de famille, la qualité est mesurée par les métriques standard de génération de nuages de points (`scripts/evaluate_generation.py`, PointFlow) : MMD-CD (fidélité, plus bas est mieux), COV-CD (couverture des formes réelles, plus haut est mieux) et 1-NNA-CD (50 % si générées et réelles sont indiscernables, 100 % si elles se séparent parfaitement).
+
+| Moyenne sur 3 seeds (générateur v4) | `data_scale: 1` | **`data_scale: 4`** |
+|---|---|---|
+| Écart médian à la surface | 0.0129 | **0.0092** |
+| Points à plus de 30 % du rayon hors de la surface | 15.9 % | **8.8 %** |
+| Famille reconnue | 100 % | **100 %** |
+| CD vers sa famille | 0.0026 à 0.0028 | **0.0016 à 0.0017** |
+| MMD-CD | 0.00224 | **0.00154** |
+| COV-CD | 48 % | **51 %** |
+| 1-NNA-CD | 98.4 % | **96.3 %** |
+
+Les trois seeds à l'échelle 4 font mieux que la meilleure seed à l'échelle 1 sur chaque mesure. Pousser l'échelle à 8 (un run) dégrade le résultat par rapport à 4 (MMD 0.00176, 1-NNA 98.8 %).
+
+Le modèle publié et la visionneuse utilisent le générateur v4 et `data_scale: 4` (seed 0).
 
 ---
 
@@ -98,7 +116,8 @@ Le modèle publié et la visionneuse utilisent le générateur v4 (seed 0).
 
 - **Données procédurales, pas SMAL** : les formes sont des cylindres échantillonnés autour d'un squelette paramétrique inspiré de la topologie SMAL, pas le modèle SMAL lui-même (`shape_betas` est inutilisé). La variabilité intra-famille est faible (±3 % sur les proportions).
 - **100 % de reconnaissance, sur un test facile** : avec le générateur v4, les 5 familles sont séparées par construction (proportions, écartement, port de tête) et leur variabilité interne est faible ; ce score mesure que le modèle suit le squelette, pas qu'il généralise à de vrais animaux.
-- **Précision** : les formes générées restent environ 4 fois plus éloignées de leur famille que deux créatures réelles entre elles (0.0027 contre 0.0007).
+- **Précision** : les formes générées restent environ 2 fois plus éloignées de leur famille que deux créatures réelles entre elles (0.0016 contre 0.0007), et leur surface reste environ 20 fois plus diffuse que celle des vraies formes ; le 1-NNA de 96 % montre qu'elles se distinguent encore facilement des vraies.
+- **L'autoguidage n'aide pas ici** (`--guide-checkpoint`, avec un petit modèle de 8 époques comme guide) : à $w = 1.5$, il porte une seed à 100 % de reconnaissance (modèles du générateur v3), mais divise presque la couverture par deux (COV 62 % → 32 %) ; au-delà, les formes se dégradent. Restreindre le guidage à un intervalle de $t$ (`--guidance-interval`) ne fait que l'atténuer.
 - **Greffe** : la jonction aligne le sous-arbre donneur par translation, sans mise à l'échelle ni rotation.
 - **Une seule seed par variante intermédiaire** dans l'ablation. Le modèle final varie de 90 à 95 % selon la seed (3 runs), et l'évaluation sur 40 squelettes a elle-même une incertitude d'environ ±8 points.
 - **Le couplage OT par forme n'aide pas encore** (`ot_noise_per_sample` dans la config, désactivé par défaut) : il rend l'échantillonnage en 2 à 5 pas bien meilleur (CD 0.0063 en 2 pas, contre 0.049), mais fait tomber la reconnaissance de famille à 42 % en 20 pas, avec 20 % comme avec 50 % de bruit indépendant. Le guidage sans classifieur (`cond_drop_prob: 0.1` à l'entraînement, `guidance_scale` à la génération) remonte ce score à 55–60 % pour $w$ entre 1.5 et 2 (un seul run), encore loin du modèle final ; à partir de $w = 2.5$, les formes se dégradent.
@@ -173,6 +192,7 @@ python scripts/train.py --config configs/default_config.yaml
 ```bash
 python scripts/evaluate.py
 python scripts/evaluate_families.py
+python scripts/evaluate_generation.py      # MMD-CD, COV-CD, 1-NNA-CD
 ```
 
 ### 6. Export des créatures pour la visionneuse
