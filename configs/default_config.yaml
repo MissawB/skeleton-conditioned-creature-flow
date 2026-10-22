@@ -20,7 +20,7 @@ model:
   dropout: 0.05
   num_joints: 35
   spatial_distance_scale: 2.0
-  data_scale: 1.0               # coordinates are multiplied by this inside the network (data std ~0.25 vs noise std 1)
+  data_scale: 4.0               # coordinates are multiplied by this inside the network (data std ~0.25 vs noise std 1)
 
 training:
   batch_size: 16
