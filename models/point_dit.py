@@ -131,14 +131,18 @@ class PointDiT(nn.Module):
         num_heads: int = 8,
         num_joints: int = 35,
         spatial_distance_scale: float = 2.0,
-        data_scale: float = 1.0
+        data_scale: float = 1.0,
+        fourier_octaves: int = 0
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
         # Coordinates are multiplied by data_scale before entering the network (saved with the weights)
         self.register_buffer("data_scale", torch.tensor(float(data_scale)))
 
-        self.point_proj = nn.Linear(point_dim, hidden_dim)
+        # Optional sin/cos of the coordinates at frequencies pi * 2^k: a linear layer alone resolves fine offsets poorly
+        self.fourier_octaves = fourier_octaves
+        self.register_buffer("fourier_freqs", torch.pi * 2.0 ** torch.arange(fourier_octaves, dtype=torch.float32), persistent=False)
+        self.point_proj = nn.Linear(point_dim * (1 + 2 * fourier_octaves), hidden_dim)
         self.time_embedder = TimestepEmbedder(hidden_dim)
         self.skeleton_encoder = SkeletonEncoder(num_joints=num_joints, hidden_dim=hidden_dim)
         # Learned "no skeleton" memory for classifier-free guidance
@@ -165,6 +169,14 @@ class PointDiT(nn.Module):
         state_dict.setdefault(prefix + "data_scale", torch.tensor(1.0))
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
+    def embed_points(self, x: torch.Tensor) -> torch.Tensor:
+        """[x, sin(f_k x), cos(f_k x)] for each octave k, grouped by octave."""
+        if self.fourier_octaves == 0:
+            return x
+        angles = x.unsqueeze(-2) * self.fourier_freqs.view(-1, 1)  # (..., L, 3)
+        trig = torch.stack([torch.sin(angles), torch.cos(angles)], dim=-2)  # (..., L, 2, 3)
+        return torch.cat([x, trig.flatten(-3)], dim=-1)
+
     def forward(self, x_t: torch.Tensor, t: torch.Tensor, joints: torch.Tensor, cond_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Predicts velocity field v_t at point cloud x_t.
@@ -184,7 +196,7 @@ class PointDiT(nn.Module):
             joint_mem = keep * joint_mem + (1.0 - keep) * self.null_joint_tokens
             bias_weight = keep.unsqueeze(1)  # (B, 1, 1, 1), broadcast over heads, points and joints
         
-        h = self.point_proj(x_t)
+        h = self.point_proj(self.embed_points(x_t))
         # Noisy x_t says little about where a point will land; bias attention with an estimate of x_1 instead
         pos = x_t
         remaining = (1.0 - t).view(-1, 1, 1)

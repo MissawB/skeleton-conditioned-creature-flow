@@ -52,3 +52,36 @@ def test_checkpoints_without_data_scale_load_with_unit_scale():
     model = PointDiT(hidden_dim=32, num_layers=1, num_heads=2, data_scale=4.0)
     model.load_state_dict(state)
     assert model.data_scale.item() == 1.0
+
+def test_fourier_features_feed_sin_cos_of_coordinates():
+    model = PointDiT(hidden_dim=32, num_layers=1, num_heads=2, fourier_octaves=4)
+    assert model.point_proj.in_features == 3 + 3 * 2 * 4
+    x = torch.randn(2, 16, 3)
+    feats = model.embed_points(x)
+    torch.testing.assert_close(feats[..., :3], x)
+    torch.testing.assert_close(feats[..., 3:6], torch.sin(torch.pi * x))
+    v = model(x, torch.rand(2), torch.randn(2, 35, 3))
+    assert v.shape == (2, 16, 3)
+
+def test_checkpoint_architecture_includes_fourier_octaves():
+    import yaml
+    from scripts.evaluate_families import load_model
+    cfg = yaml.safe_load(open("configs/default_config.yaml", encoding="utf-8"))
+    for octaves in (0, 6):
+        model = PointDiT(hidden_dim=32, num_layers=1, num_heads=2, fourier_octaves=octaves)
+        path = f"{__import__('tempfile').gettempdir()}/fourier_{octaves}.pt"
+        torch.save({"model_state": model.state_dict()}, path)
+        loaded = load_model(cfg, path, torch.device("cpu"))
+        assert loaded.fourier_octaves == octaves
+
+def test_late_time_sampling_draws_that_share_of_t_near_one():
+    model = PointDiT(hidden_dim=32, num_layers=1, num_heads=2)
+    fm = OptimalTransportFlowMatching(model, late_t_prob=0.5, late_t_min=0.9)
+    seen = []
+    model.forward = lambda x_t, t, joints, cond_mask=None: (seen.append(t.clone()), torch.zeros_like(x_t))[1]
+    torch.manual_seed(0)
+    fm.compute_loss(torch.randn(4000, 4, 3), torch.randn(4000, 35, 3))
+    t = seen[0]
+    # half from U[0.9, 1] plus a tenth of the uniform half
+    assert abs((t >= 0.9).float().mean().item() - 0.55) < 0.03
+    assert t.min() >= 0 and t.max() <= 1

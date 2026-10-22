@@ -5,10 +5,13 @@ from typing import Tuple, List, Optional
 class OptimalTransportFlowMatching:
     """Optimal Transport Flow Matching (OT-FM) framework with Euler and Heun ODE solvers."""
     
-    def __init__(self, model: nn.Module, cond_drop_prob: float = 0.0):
+    def __init__(self, model: nn.Module, cond_drop_prob: float = 0.0, late_t_prob: float = 0.0, late_t_min: float = 0.9):
         self.model = model
         # Share of training samples whose skeleton is dropped, enabling classifier-free guidance
         self.cond_drop_prob = cond_drop_prob
+        # Share of samples drawn from t ~ U[late_t_min, 1], where the fine surface detail is resolved
+        self.late_t_prob = late_t_prob
+        self.late_t_min = late_t_min
 
     def _velocity(
         self,
@@ -48,6 +51,9 @@ class OptimalTransportFlowMatching:
         if x_0 is None:
             x_0 = torch.randn_like(x_1)
         t = torch.rand(B, device=device)
+        if self.late_t_prob > 0:
+            late = torch.rand(B, device=device) < self.late_t_prob
+            t = torch.where(late, self.late_t_min + (1.0 - self.late_t_min) * torch.rand(B, device=device), t)
         
         # OT interpolation
         t_expand = t.view(B, 1, 1)
