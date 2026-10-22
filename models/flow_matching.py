@@ -40,6 +40,9 @@ class OptimalTransportFlowMatching:
         """
         B, N, _ = x_1.shape
         device = x_1.device
+        # Work in the network's coordinate frame (data std ~0.25 is scaled towards the noise std of 1)
+        s = self.model.data_scale
+        x_1, joints = x_1 * s, joints * s
         
         # Sample x_0 ~ N(0, I) and t ~ U[0, 1]
         if x_0 is None:
@@ -79,6 +82,9 @@ class OptimalTransportFlowMatching:
         self.model.eval()
         if guide_model is not None:
             guide_model.eval()
+            assert torch.equal(guide_model.data_scale, self.model.data_scale), "guide must share the data scale"
+        s = self.model.data_scale
+        joints = joints * s
         t_lo, t_hi = guidance_interval
         velocity = lambda x, t_val, t: self._velocity(
             x, t, joints, guidance_scale if t_lo <= t_val <= t_hi else 1.0, guide_model)
@@ -88,7 +94,7 @@ class OptimalTransportFlowMatching:
         x = torch.randn(B, num_points, 3, device=device)
         dt = 1.0 / num_steps
         
-        trajectory = [x.clone().cpu()] if record_trajectory else []
+        trajectory = [(x / s).cpu()] if record_trajectory else []
         
         for i in range(num_steps):
             t_val = i / num_steps
@@ -108,6 +114,6 @@ class OptimalTransportFlowMatching:
                 raise ValueError(f"Unknown solver {solver}. Choose 'euler' or 'heun'.")
                 
             if record_trajectory:
-                trajectory.append(x.clone().cpu())
+                trajectory.append((x / s).cpu())
                 
-        return trajectory, x
+        return trajectory, x / s
