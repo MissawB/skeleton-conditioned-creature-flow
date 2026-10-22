@@ -60,7 +60,7 @@ $$\text{score}_{h}(i, k) = \frac{q_i \cdot k_k}{\sqrt{d}} - \lambda_h \, \| \hat
 
 ## 📊 Résultats
 
-Modèle de 10,4 M de paramètres entraîné 30 époques sur 500 créatures (100 par famille), soit environ 16 min sur une RTX 4060 Laptop (pic mémoire de 5,6 Go). La génération utilise une moyenne mobile exponentielle des poids (EMA, décroissance 0.995, soit un horizon d'environ 6 époques) plutôt que leur dernier état.
+Modèle de 10,4 M de paramètres entraîné 90 époques sur 500 créatures (100 par famille), soit environ 48 min sur une RTX 4060 Laptop (pic mémoire de 5,6 Go). Les ablations ci-dessous, jusqu'à la section sur la durée d'entraînement, ont été faites à 30 époques (16 min). La génération utilise une moyenne mobile exponentielle des poids (EMA, décroissance 0.995, soit un horizon d'environ 6 époques) plutôt que leur dernier état.
 
 **Protocole** (`scripts/evaluate_families.py`) : 40 squelettes jamais vus (8 par famille, seed disjointe de l'entraînement). Chaque créature générée est attribuée à la famille dont les 8 formes réelles de référence sont en moyenne les plus proches en Chamfer Distance.
 
@@ -108,7 +108,23 @@ En plus de la reconnaissance de famille, la qualité est mesurée par les métri
 
 Les trois seeds à l'échelle 4 font mieux que la meilleure seed à l'échelle 1 sur chaque mesure. Pousser l'échelle à 8 (un run) dégrade le résultat par rapport à 4 (MMD 0.00176, 1-NNA 98.8 %).
 
-Le modèle publié et la visionneuse utilisent le générateur v4 et `data_scale: 4` (seed 0).
+### Durée d'entraînement
+
+Même à l'échelle 4, la surface restait floue. Le diagnostic écarte l'intégration (20 ou 100 pas de Heun donnent le même écart, 0.0096 contre 0.0095) et l'encodage des coordonnées : des Fourier features sur l'entrée (`fourier_octaves`, Tancik et al. 2020, 6 ou 10 octaves) dégradent légèrement le résultat (écart 0.0107, MMD 0.0018). En revanche, les formes s'améliorent à chaque palier d'entraînement (écart 0.0158, 0.0121 puis 0.0096 aux époques 10, 20 et 30) alors que la loss ne bouge presque plus (1.30 à 1.29) : le modèle à 30 époques était sous-entraîné, et la loss ne le montrait pas.
+
+| Moyenne sur 3 seeds (générateur v4, `data_scale: 4`) | 30 époques | **90 époques** |
+|---|---|---|
+| Écart médian à la surface | 0.0092 | **0.0053** |
+| Points à plus de 30 % du rayon hors de la surface | 8.8 % | **2.2 %** |
+| Famille reconnue | 100 % | **100 %** |
+| CD vers sa famille | 0.0016 à 0.0017 | **0.0010 à 0.0011** |
+| MMD-CD | 0.00154 | **0.00100** |
+| COV-CD | 51 % | **50 %** (45 à 55 %) |
+| 1-NNA-CD | 96.3 % | **51.7 %** (50.0 à 53.8 %) |
+
+À 90 époques, un classifieur au plus proche voisin ne distingue presque plus les formes générées des vraies. L'EMA devient aussi nettement utile : sans elle, l'écart médian remonte à 0.006–0.008. Tirer 30 % des instants d'entraînement dans $[0.9, 1]$ (`late_t_prob`), là où se résout le détail de surface, aide à 30 époques (MMD 0.00131 contre 0.00159) mais n'apporte presque plus rien à 90 (MMD 0.00093, un run) ; l'option reste désactivée.
+
+Le modèle publié et la visionneuse utilisent le générateur v4, `data_scale: 4` et 90 époques (seed 0).
 
 ---
 
@@ -116,7 +132,8 @@ Le modèle publié et la visionneuse utilisent le générateur v4 et `data_scale
 
 - **Données procédurales, pas SMAL** : les formes sont des cylindres échantillonnés autour d'un squelette paramétrique inspiré de la topologie SMAL, pas le modèle SMAL lui-même (`shape_betas` est inutilisé). La variabilité intra-famille est faible (±3 % sur les proportions).
 - **100 % de reconnaissance, sur un test facile** : avec le générateur v4, les 5 familles sont séparées par construction (proportions, écartement, port de tête) et leur variabilité interne est faible ; ce score mesure que le modèle suit le squelette, pas qu'il généralise à de vrais animaux.
-- **Précision** : les formes générées restent environ 2 fois plus éloignées de leur famille que deux créatures réelles entre elles (0.0016 contre 0.0007), et leur surface reste environ 20 fois plus diffuse que celle des vraies formes ; le 1-NNA de 96 % montre qu'elles se distinguent encore facilement des vraies.
+- **Précision** : les formes générées restent environ 1,5 fois plus éloignées de leur famille que deux créatures réelles entre elles (0.0011 contre 0.0007), et leur surface reste plus diffuse que celle des vraies formes (écart médian 0.0053 contre 0.0004).
+- **Évaluation saturée** : avec 40 formes générées contre 40 réelles, un 1-NNA proche de 50 % ne permet plus de mesurer de nouveaux progrès ; il faudrait plus d'échantillons ou un test plus fin.
 - **L'autoguidage n'aide pas ici** (`--guide-checkpoint`, avec un petit modèle de 8 époques comme guide) : à $w = 1.5$, il porte une seed à 100 % de reconnaissance (modèles du générateur v3), mais divise presque la couverture par deux (COV 62 % → 32 %) ; au-delà, les formes se dégradent. Restreindre le guidage à un intervalle de $t$ (`--guidance-interval`) ne fait que l'atténuer.
 - **Greffe** : la jonction aligne le sous-arbre donneur par translation, sans mise à l'échelle ni rotation.
 - **Une seule seed par variante intermédiaire** dans l'ablation. Le modèle final varie de 90 à 95 % selon la seed (3 runs), et l'évaluation sur 40 squelettes a elle-même une incertitude d'environ ±8 points.
