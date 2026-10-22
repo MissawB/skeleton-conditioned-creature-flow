@@ -126,6 +126,21 @@ class SMALQuadrupedGenerator:
         
         return joints.astype(np.float32)
 
+    def bone_radii(self, family: str) -> list:
+        """Cylinder radius of each bone (child joints 1..34, in joint order), from its anatomical region."""
+        prof = self.family_profiles[family]
+        radii = []
+        for child_idx in range(1, 35):
+            if child_idx in [1, 2, 3, 4]:  # spine
+                radii.append(prof["r_body"])
+            elif child_idx in [5, 6]:  # head
+                radii.append(prof["r_body"] * 0.75)
+            elif child_idx in [33, 34]:  # tail
+                radii.append(prof["r_body"] * 0.25)
+            else:
+                radii.append(prof["r_leg"])
+        return radii
+
     def _sample_points_around_bones(self, joints: np.ndarray, family: str, num_points: int) -> np.ndarray:
         prof = self.family_profiles[family]
         points = []
@@ -136,17 +151,7 @@ class SMALQuadrupedGenerator:
             parent_idx = PARENT_INDICES[child_idx]
             segments.append((parent_idx, child_idx))
             
-        # Radii based on anatomical region
-        radii = []
-        for _, child_idx in segments:
-            if child_idx in [1, 2, 3, 4]:  # spine
-                radii.append(prof["r_body"])
-            elif child_idx in [5, 6]:  # head
-                radii.append(prof["r_body"] * 0.75)
-            elif child_idx in [33, 34]:  # tail
-                radii.append(prof["r_body"] * 0.25)
-            else:
-                radii.append(prof["r_leg"])
+        radii = self.bone_radii(family)
         
         # Allocate points proportionally to each cylinder's lateral area (2*pi*r*L) for uniform surface density
         lengths = np.array([np.linalg.norm(joints[c] - joints[p]) for p, c in segments])

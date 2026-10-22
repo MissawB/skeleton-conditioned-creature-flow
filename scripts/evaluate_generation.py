@@ -7,7 +7,7 @@ import yaml
 import torch
 from data.smal_quadrupeds import SMALQuadrupedGenerator, FAMILIES
 from models.flow_matching import OptimalTransportFlowMatching
-from pipeline.metrics import compute_generation_metrics
+from pipeline.metrics import compute_generation_metrics, surface_distance
 from scripts.evaluate_families import load_model, add_sampling_args, sampling_kwargs
 
 def main():
@@ -18,7 +18,8 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate generation quality with MMD, COV and 1-NNA.")
     parser.add_argument("--config", type=str, default="configs/default_config.yaml")
     parser.add_argument("--checkpoint", type=str, default=None)
-    parser.add_argument("--samples-per-family", type=int, default=8)
+    parser.add_argument("--samples-per-family", type=int, default=40)
+    parser.add_argument("--batch-size", type=int, default=20, help="skeletons sampled together")
     add_sampling_args(parser)
     args = parser.parse_args()
 
@@ -34,15 +35,24 @@ def main():
     torch.manual_seed(0)
     generator = SMALQuadrupedGenerator(seed=123)
     to_tensor = lambda a: torch.from_numpy(a).to(device)
-    gen, ref = [], []
+    gen, ref, gaps = [], [], []
     for family in FAMILIES:
+        skeletons = []
         for _ in range(args.samples_per_family):
-            joints = to_tensor(generator.generate_instance(family)["joints"]).unsqueeze(0)
-            gen.append(fm.sample(joints, **sample_kwargs)[1][0])
+            skeletons.append(to_tensor(generator.generate_instance(family)["joints"]))
             ref.append(to_tensor(generator.generate_instance(family)["points"]))
+        radii = generator.bone_radii(family)
+        for batch in torch.stack(skeletons).split(args.batch_size):
+            points = fm.sample(batch, **sample_kwargs)[1]
+            gen.extend(points)
+            gaps.extend(surface_distance(p, j, radii) for p, j in zip(points, batch))
 
     metrics = compute_generation_metrics(torch.stack(gen), torch.stack(ref))
     print(f"MMD-CD: {metrics['mmd']:.5f} | COV-CD: {metrics['cov']:.0%} | 1-NNA-CD: {metrics['1nna']:.1%} (50% is ideal)")
+    # Distance to the procedural surface the skeleton defines (real shapes: median about 0.0004)
+    gap = torch.cat(gaps)
+    print(f"Surface distance: median {gap.abs().median():.4f} | p90 {gap.abs().quantile(0.9):.4f} | "
+          f"mean signed {gap.mean():+.4f} (positive = outside) | {len(gen)} vs {len(ref)} shapes")
 
 if __name__ == "__main__":
     main()

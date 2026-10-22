@@ -46,16 +46,33 @@ def compute_novelty_score(gen_points: torch.Tensor, dataset_points: List[torch.T
             min_cd = cd
     return min_cd
 
-def pairwise_chamfer_distance(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+def pairwise_chamfer_distance(a: torch.Tensor, b: torch.Tensor, chunk_size: int = 32) -> torch.Tensor:
     """
     Chamfer Distance between every pair of clouds of two sets.
     a: (n, N, 3), b: (m, M, 3) -> (n, m)
+    b is processed chunk_size clouds at a time to bound the (chunk, N, M) distance tensor.
     """
     rows = []
     for x in a:
-        dist_sq = torch.cdist(x.unsqueeze(0).expand(len(b), -1, -1), b) ** 2
-        rows.append(dist_sq.min(dim=2)[0].mean(dim=1) + dist_sq.min(dim=1)[0].mean(dim=1))
+        row = []
+        for b_chunk in b.split(chunk_size):
+            dist_sq = torch.cdist(x.unsqueeze(0).expand(len(b_chunk), -1, -1), b_chunk) ** 2
+            row.append(dist_sq.min(dim=2)[0].mean(dim=1) + dist_sq.min(dim=1)[0].mean(dim=1))
+        rows.append(torch.cat(row))
     return torch.stack(rows)
+
+def surface_distance(points: torch.Tensor, joints: torch.Tensor, radii) -> torch.Tensor:
+    """
+    Signed distance of each point to the closest procedural cylinder surface (positive outside).
+    points: (N, 3), joints: (35, 3), radii: radius of the bone ending at each child joint 1..34.
+    """
+    from data.smal_quadrupeds import PARENT_INDICES
+    a = joints[[PARENT_INDICES[c] for c in range(1, len(joints))]]
+    ab = joints[1:] - a
+    u = (((points[:, None] - a[None]) * ab[None]).sum(-1) / ((ab ** 2).sum(-1) + 1e-9)).clamp(0, 1)
+    axis_dist = (points[:, None] - (a[None] + u[..., None] * ab[None])).norm(dim=-1)  # (N, bones)
+    gap = axis_dist - torch.as_tensor(radii, dtype=points.dtype, device=points.device)
+    return gap.gather(1, gap.abs().argmin(1, keepdim=True)).squeeze(1)
 
 def compute_generation_metrics(gen: torch.Tensor, ref: torch.Tensor) -> Dict[str, float]:
     """

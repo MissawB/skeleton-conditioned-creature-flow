@@ -35,3 +35,26 @@ def test_generation_metrics_mmd_cov_1nna():
     # Two independent draws of the same distribution are hard to tell apart
     fair = compute_generation_metrics(torch.randn(12, 64, 3), ref)
     assert 0.2 <= fair["1nna"] <= 0.8 and fair["cov"] > 0.3
+
+def test_surface_distance_is_near_zero_on_real_shapes_and_tracks_offsets():
+    import numpy as np
+    from data.smal_quadrupeds import SMALQuadrupedGenerator
+    from pipeline.metrics import surface_distance
+    gen = SMALQuadrupedGenerator(seed=0)
+    inst = gen.generate_instance("equidae")
+    radii = gen.bone_radii("equidae")
+    assert len(radii) == 34
+    points = torch.from_numpy(inst["points"]).float()
+    joints = torch.from_numpy(inst["joints"]).float()
+    gap = surface_distance(points, joints, radii)
+    assert gap.shape == (len(points),)
+    assert gap.abs().median() < 0.002
+    # Far away points are outside every surface; a slightly shifted shape drifts off its surface
+    assert (surface_distance(points + 10.0, joints, radii) > 9.0).all()
+    shifted = surface_distance(points + torch.tensor([0.0, 0.0, 0.03]), joints, radii)
+    assert shifted.abs().median() > 5 * gap.abs().median()
+
+def test_pairwise_chamfer_distance_is_independent_of_chunking():
+    from pipeline.metrics import pairwise_chamfer_distance
+    a, b = torch.randn(5, 64, 3), torch.randn(7, 64, 3)
+    torch.testing.assert_close(pairwise_chamfer_distance(a, b, chunk_size=2), pairwise_chamfer_distance(a, b, chunk_size=100))
