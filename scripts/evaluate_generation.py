@@ -48,7 +48,8 @@ def main():
             gaps.extend(surface_distance(p, j, radii) for p, j in zip(points, batch))
 
     metrics = compute_generation_metrics(torch.stack(gen), torch.stack(ref))
-    print(f"MMD-CD: {metrics['mmd']:.5f} | COV-CD: {metrics['cov']:.0%} | 1-NNA-CD: {metrics['1nna']:.1%} (50% is ideal)")
+    print(f"MMD-CD: {metrics['mmd']:.5f} | COV-CD: {metrics['cov']:.0%} | 1-NNA-CD: {metrics['1nna']:.1%} (50% is ideal; "
+          f"generated {metrics['1nna_gen']:.0%}, real {metrics['1nna_ref']:.0%})")
     # Distance to the procedural surface the skeleton defines (real shapes: median about 0.0004)
     gap = torch.cat(gaps)
     print(f"Surface distance: median {gap.abs().median():.4f} | p90 {gap.abs().quantile(0.9):.4f} | "

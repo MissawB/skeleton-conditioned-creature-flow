@@ -58,3 +58,13 @@ def test_pairwise_chamfer_distance_is_independent_of_chunking():
     from pipeline.metrics import pairwise_chamfer_distance
     a, b = torch.randn(5, 64, 3), torch.randn(7, 64, 3)
     torch.testing.assert_close(pairwise_chamfer_distance(a, b, chunk_size=2), pairwise_chamfer_distance(a, b, chunk_size=100))
+
+def test_1nna_split_shows_noise_masquerading_as_indistinguishable():
+    from pipeline.metrics import compute_generation_metrics
+    torch.manual_seed(0)
+    ref = torch.randn(30, 64, 3)
+    gen = torch.randn(30, 64, 3) * 1.15  # same family of shapes, but blurrier
+    m = compute_generation_metrics(gen, ref)
+    # Blurry clouds are far from each other, so their nearest neighbour is a sharp one
+    assert m["1nna_gen"] < 0.5 < m["1nna_ref"]
+    assert abs(m["1nna"] - (m["1nna_gen"] + m["1nna_ref"]) / 2) < 1e-6

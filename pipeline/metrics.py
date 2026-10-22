@@ -81,6 +81,8 @@ def compute_generation_metrics(gen: torch.Tensor, ref: torch.Tensor) -> Dict[str
     - mmd: mean distance from each reference to its closest generated cloud (fidelity, lower is better)
     - cov: share of references that are the nearest neighbour of some generated cloud (diversity, higher is better)
     - 1nna: leave-one-out 1-NN accuracy of telling generated from reference clouds (50% is ideal)
+    - 1nna_gen / 1nna_ref: the same accuracy over generated / reference clouds only. Both should be near 50%:
+      blurry samples are far from each other, so they get a low 1nna_gen and a high 1nna_ref that average to 50%
     """
     d_gr = pairwise_chamfer_distance(gen, ref)
     d_gg = pairwise_chamfer_distance(gen, gen)
@@ -95,4 +97,5 @@ def compute_generation_metrics(gen: torch.Tensor, ref: torch.Tensor) -> Dict[str
     gen_correct = d_gg.min(dim=1)[0] < d_gr.min(dim=1)[0]
     ref_correct = d_rr.min(dim=1)[0] < d_gr.min(dim=0)[0]
     one_nna = torch.cat([gen_correct, ref_correct]).float().mean().item()
-    return {"mmd": mmd, "cov": cov, "1nna": one_nna}
+    return {"mmd": mmd, "cov": cov, "1nna": one_nna,
+            "1nna_gen": gen_correct.float().mean().item(), "1nna_ref": ref_correct.float().mean().item()}
