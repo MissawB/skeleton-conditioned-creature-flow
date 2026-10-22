@@ -10,9 +10,20 @@ class OptimalTransportFlowMatching:
         # Share of training samples whose skeleton is dropped, enabling classifier-free guidance
         self.cond_drop_prob = cond_drop_prob
 
-    def _velocity(self, x: torch.Tensor, t: torch.Tensor, joints: torch.Tensor, guidance_scale: float) -> torch.Tensor:
+    def _velocity(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        joints: torch.Tensor,
+        guidance_scale: float,
+        guide_model: Optional[nn.Module] = None
+    ) -> torch.Tensor:
         if guidance_scale == 1.0:
             return self.model(x, t, joints)
+        if guide_model is not None:
+            # Autoguidance: steer away from a weaker model's prediction, v = v_weak + w * (v - v_weak)
+            v_weak = guide_model(x, t, joints)
+            return v_weak + guidance_scale * (self.model(x, t, joints) - v_weak)
         # Conditional and unconditional passes in one batch: v = v_uncond + w * (v_cond - v_uncond)
         B = x.shape[0]
         cond_mask = torch.cat([torch.ones(B, dtype=torch.bool), torch.zeros(B, dtype=torch.bool)]).to(x.device)
@@ -55,13 +66,22 @@ class OptimalTransportFlowMatching:
         num_steps: int = 20,
         solver: str = "heun",
         record_trajectory: bool = False,
-        guidance_scale: float = 1.0
+        guidance_scale: float = 1.0,
+        guidance_interval: Tuple[float, float] = (0.0, 1.0),
+        guide_model: Optional[nn.Module] = None
     ) -> Tuple[List[torch.Tensor], torch.Tensor]:
         """
         Integrates dx/dt = v_theta(x, t, joints) from t=0 to t=1.
-        guidance_scale > 1 applies classifier-free guidance (needs a model trained with cond_drop_prob > 0).
+        guidance_scale > 1 applies classifier-free guidance (needs a model trained with cond_drop_prob > 0),
+        or autoguidance when guide_model (e.g. an early checkpoint of the same model) is given.
+        Guidance is only applied for t in guidance_interval (Kynkaanniemi et al., 2024); elsewhere w = 1.
         """
         self.model.eval()
+        if guide_model is not None:
+            guide_model.eval()
+        t_lo, t_hi = guidance_interval
+        velocity = lambda x, t_val, t: self._velocity(
+            x, t, joints, guidance_scale if t_lo <= t_val <= t_hi else 1.0, guide_model)
         B = joints.shape[0]
         device = joints.device
         
@@ -75,13 +95,14 @@ class OptimalTransportFlowMatching:
             t = torch.full((B,), t_val, device=device)
             
             if solver == "euler":
-                v = self._velocity(x, t, joints, guidance_scale)
+                v = velocity(x, t_val, t)
                 x = x + dt * v
             elif solver == "heun":
-                v1 = self._velocity(x, t, joints, guidance_scale)
+                v1 = velocity(x, t_val, t)
                 x_next_euler = x + dt * v1
-                t_next = torch.full((B,), min(1.0, (i + 1) / num_steps), device=device)
-                v2 = self._velocity(x_next_euler, t_next, joints, guidance_scale)
+                t_next_val = min(1.0, (i + 1) / num_steps)
+                t_next = torch.full((B,), t_next_val, device=device)
+                v2 = velocity(x_next_euler, t_next_val, t_next)
                 x = x + 0.5 * dt * (v1 + v2)
             else:
                 raise ValueError(f"Unknown solver {solver}. Choose 'euler' or 'heun'.")
