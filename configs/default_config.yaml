@@ -28,6 +28,9 @@ training:
   learning_rate: 0.0002
   weight_decay: 0.00001
   num_epochs: 90
+  lr_schedule: "constant"       # "cosine": decay from learning_rate to min_lr_ratio * learning_rate over the run
+  warmup_steps: 0               # linear warmup at the start (optimizer steps)
+  min_lr_ratio: 0.0
   save_every: 5
   device: "cuda"
   checkpoint_dir: "checkpoints"

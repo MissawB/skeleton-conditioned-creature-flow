@@ -50,7 +50,11 @@ def main():
         weight_decay=cfg["training"]["weight_decay"],
         checkpoint_dir=cfg["training"]["checkpoint_dir"],
         device=cfg["training"]["device"],
-        ema_decay=cfg["training"].get("ema_decay", 0.995)
+        ema_decay=cfg["training"].get("ema_decay", 0.995),
+        lr_schedule=cfg["training"].get("lr_schedule", "constant"),
+        num_epochs=cfg["training"]["num_epochs"],
+        warmup_steps=cfg["training"].get("warmup_steps", 0),
+        min_lr_ratio=cfg["training"].get("min_lr_ratio", 0.0)
     )
     
     epochs = cfg["training"]["num_epochs"]
