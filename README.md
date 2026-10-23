@@ -94,7 +94,7 @@ Sur les vraies formes, l'écart de Chamfer entre un bovidé et la famille la plu
 
 Les créatures sont normalisées dans la boule unité, donc leurs points ont un écart-type d'environ 0.25, alors que le bruit de départ a un écart-type de 1. Le modèle passe ainsi l'essentiel de la trajectoire à contracter le nuage, et les surfaces générées sont épaisses : les points s'écartent de la surface réelle d'environ 0.013 en médiane (0.0004 sur les vraies formes), avec un biais vers l'extérieur. Avec `data_scale: 4` (config), les points et les articulations sont multipliés par 4 à l'intérieur du flow puis divisés à la sortie (le biais de distance est corrigé de $1/4^2$), ce qui rapproche l'échelle des données de celle du bruit, à la manière du $\sigma_{data}$ d'EDM.
 
-En plus de la reconnaissance de famille, la qualité est mesurée par les métriques standard de génération de nuages de points (`scripts/evaluate_generation.py`, PointFlow) : MMD-CD (fidélité, plus bas est mieux), COV-CD (couverture des formes réelles, plus haut est mieux) et 1-NNA-CD (50 % si générées et réelles sont indiscernables, 100 % si elles se séparent parfaitement).
+En plus de la reconnaissance de famille, la qualité est mesurée par les métriques standard de génération de nuages de points (`scripts/evaluate_generation.py`, PointFlow) : MMD-CD (fidélité, plus bas est mieux), COV-CD (couverture des formes réelles, plus haut est mieux) et 1-NNA-CD (50 % si générées et réelles sont indiscernables, 100 % si elles se séparent parfaitement). S'y ajoute l'écart à la surface : la distance signée de chaque point à la surface du cylindre d'os le plus proche, calculée à partir du squelette.
 
 | Moyenne sur 3 seeds (générateur v4) | `data_scale: 1` | **`data_scale: 4`** |
 |---|---|---|
@@ -114,17 +114,37 @@ Même à l'échelle 4, la surface restait floue. Le diagnostic écarte l'intégr
 
 | Moyenne sur 3 seeds (générateur v4, `data_scale: 4`) | 30 époques | **90 époques** |
 |---|---|---|
-| Écart médian à la surface | 0.0092 | **0.0053** |
+| Écart médian à la surface | 0.0090 | **0.0051** |
 | Points à plus de 30 % du rayon hors de la surface | 8.8 % | **2.2 %** |
 | Famille reconnue | 100 % | **100 %** |
 | CD vers sa famille | 0.0016 à 0.0017 | **0.0010 à 0.0011** |
-| MMD-CD | 0.00154 | **0.00100** |
-| COV-CD | 51 % | **50 %** (45 à 55 %) |
-| 1-NNA-CD | 96.3 % | **51.7 %** (50.0 à 53.8 %) |
+| MMD-CD | 0.00150 | **0.00098** |
+| COV-CD | 50 % | **56 %** |
+| 1-NNA-CD | 99.6 % | 53.6 % (51.2 à 57.5 %) |
+| &nbsp;&nbsp;dont générées bien classées | 99 % | 7 % (2 à 15 %) |
+| &nbsp;&nbsp;dont réelles bien classées | 100 % | 100 % |
 
-À 90 époques, un classifieur au plus proche voisin ne distingue presque plus les formes générées des vraies. L'EMA devient aussi nettement utile : sans elle, l'écart médian remonte à 0.006–0.008. Tirer 30 % des instants d'entraînement dans $[0.9, 1]$ (`late_t_prob`), là où se résout le détail de surface, aide à 30 époques (MMD 0.00131 contre 0.00159) mais n'apporte presque plus rien à 90 (MMD 0.00093, un run) ; l'option reste désactivée.
+Les métriques de génération sont calculées sur 200 formes générées contre 200 réelles (40 par famille). Un 1-NNA global proche de 50 % ne veut **pas** dire que les formes générées sont indiscernables : il se décompose en deux moitiés très inégales. Une vraie forme a toujours pour plus proche voisin une autre vraie forme (100 %), car les formes générées, plus diffuses, restent plus loin d'elle que ses voisines réelles. À l'inverse, une forme générée a presque toujours pour plus proche voisin une vraie forme (7 %) : elle se rapproche des vraies plus que des autres formes générées. Le score global n'est donc qu'une moyenne de ces deux erreurs opposées ; c'est la séparation des deux moitiés qui mesure l'écart restant, et `evaluate_generation.py` l'affiche. L'EMA devient aussi nettement utile : sans elle, l'écart médian remonte à 0.006–0.008. Tirer 30 % des instants d'entraînement dans $[0.9, 1]$ (`late_t_prob`), là où se résout le détail de surface, aide à 30 époques (MMD 0.00131 contre 0.00159) mais n'apporte presque plus rien à 90 (MMD 0.00093, un run) ; l'option reste désactivée.
 
 Le modèle publié et la visionneuse utilisent le générateur v4, `data_scale: 4` et 90 époques (seed 0).
+
+### Nombre de pas d'intégration
+
+Sur le modèle à 90 époques (seed 0), en faisant varier `sampling.num_steps` et `sampling.solver` :
+
+| Solveur, pas | MMD-CD | COV-CD | Écart médian à la surface |
+|---|---|---|---|
+| Heun 2 | 0.00297 | 23 % | 0.0147 |
+| Heun 3 | 0.00176 | 40 % | 0.0108 |
+| Heun 5 | 0.00125 | 46 % | 0.0073 |
+| **Heun 10** | 0.00108 | 57 % | 0.0059 |
+| **Heun 20** (défaut) | 0.00101 | 56 % | 0.0053 |
+| Heun 40 | 0.00098 | 56 % | 0.0047 |
+| Euler 10 | 0.00161 | 18 % | 0.0097 |
+| Euler 20 | 0.00110 | 35 % | 0.0067 |
+| Euler 40 | 0.00100 | 46 % | 0.0049 |
+
+Chaque pas de Heun coûte deux évaluations du réseau. Heun 10 (20 évaluations) garde presque toute la qualité pour deux fois moins de calcul que le défaut, et fait mieux qu'Euler 20 à coût égal, surtout en couverture. En dessous de 5 pas, la qualité s'effondre : descendre à 1 ou 2 pas demanderait de redresser les trajectoires (reflow) ou de distiller le modèle.
 
 ---
 
@@ -132,8 +152,7 @@ Le modèle publié et la visionneuse utilisent le générateur v4, `data_scale: 
 
 - **Données procédurales, pas SMAL** : les formes sont des cylindres échantillonnés autour d'un squelette paramétrique inspiré de la topologie SMAL, pas le modèle SMAL lui-même (`shape_betas` est inutilisé). La variabilité intra-famille est faible (±3 % sur les proportions).
 - **100 % de reconnaissance, sur un test facile** : avec le générateur v4, les 5 familles sont séparées par construction (proportions, écartement, port de tête) et leur variabilité interne est faible ; ce score mesure que le modèle suit le squelette, pas qu'il généralise à de vrais animaux.
-- **Précision** : les formes générées restent environ 1,5 fois plus éloignées de leur famille que deux créatures réelles entre elles (0.0011 contre 0.0007), et leur surface reste plus diffuse que celle des vraies formes (écart médian 0.0053 contre 0.0004).
-- **Évaluation saturée** : avec 40 formes générées contre 40 réelles, un 1-NNA proche de 50 % ne permet plus de mesurer de nouveaux progrès ; il faudrait plus d'échantillons ou un test plus fin.
+- **Précision** : les formes générées restent environ 1,5 fois plus éloignées de leur famille que deux créatures réelles entre elles (0.0011 contre 0.0007), et leur surface reste plus diffuse que celle des vraies formes (écart médian 0.0051 contre 0.0004). Un classifieur au plus proche voisin reconnaît encore toutes les vraies formes (1-NNA côté réelles : 100 %).
 - **L'autoguidage n'aide pas ici** (`--guide-checkpoint`, avec un petit modèle de 8 époques comme guide) : à $w = 1.5$, il porte une seed à 100 % de reconnaissance (modèles du générateur v3), mais divise presque la couverture par deux (COV 62 % → 32 %) ; au-delà, les formes se dégradent. Restreindre le guidage à un intervalle de $t$ (`--guidance-interval`) ne fait que l'atténuer.
 - **Greffe** : la jonction aligne le sous-arbre donneur par translation, sans mise à l'échelle ni rotation.
 - **Une seule seed par variante intermédiaire** dans l'ablation. Le modèle final varie de 90 à 95 % selon la seed (3 runs), et l'évaluation sur 40 squelettes a elle-même une incertitude d'environ ±8 points.
@@ -209,7 +228,7 @@ python scripts/train.py --config configs/default_config.yaml
 ```bash
 python scripts/evaluate.py
 python scripts/evaluate_families.py
-python scripts/evaluate_generation.py      # MMD-CD, COV-CD, 1-NNA-CD
+python scripts/evaluate_generation.py      # MMD-CD, COV-CD, 1-NNA-CD, écart à la surface (200 vs 200, ~4 min)
 ```
 
 ### 6. Export des créatures pour la visionneuse

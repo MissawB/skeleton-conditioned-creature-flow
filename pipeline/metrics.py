@@ -46,16 +46,33 @@ def compute_novelty_score(gen_points: torch.Tensor, dataset_points: List[torch.T
             min_cd = cd
     return min_cd
 
-def pairwise_chamfer_distance(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+def pairwise_chamfer_distance(a: torch.Tensor, b: torch.Tensor, chunk_size: int = 32) -> torch.Tensor:
     """
     Chamfer Distance between every pair of clouds of two sets.
     a: (n, N, 3), b: (m, M, 3) -> (n, m)
+    b is processed chunk_size clouds at a time to bound the (chunk, N, M) distance tensor.
     """
     rows = []
     for x in a:
-        dist_sq = torch.cdist(x.unsqueeze(0).expand(len(b), -1, -1), b) ** 2
-        rows.append(dist_sq.min(dim=2)[0].mean(dim=1) + dist_sq.min(dim=1)[0].mean(dim=1))
+        row = []
+        for b_chunk in b.split(chunk_size):
+            dist_sq = torch.cdist(x.unsqueeze(0).expand(len(b_chunk), -1, -1), b_chunk) ** 2
+            row.append(dist_sq.min(dim=2)[0].mean(dim=1) + dist_sq.min(dim=1)[0].mean(dim=1))
+        rows.append(torch.cat(row))
     return torch.stack(rows)
+
+def surface_distance(points: torch.Tensor, joints: torch.Tensor, radii) -> torch.Tensor:
+    """
+    Signed distance of each point to the closest procedural cylinder surface (positive outside).
+    points: (N, 3), joints: (35, 3), radii: radius of the bone ending at each child joint 1..34.
+    """
+    from data.smal_quadrupeds import PARENT_INDICES
+    a = joints[[PARENT_INDICES[c] for c in range(1, len(joints))]]
+    ab = joints[1:] - a
+    u = (((points[:, None] - a[None]) * ab[None]).sum(-1) / ((ab ** 2).sum(-1) + 1e-9)).clamp(0, 1)
+    axis_dist = (points[:, None] - (a[None] + u[..., None] * ab[None])).norm(dim=-1)  # (N, bones)
+    gap = axis_dist - torch.as_tensor(radii, dtype=points.dtype, device=points.device)
+    return gap.gather(1, gap.abs().argmin(1, keepdim=True)).squeeze(1)
 
 def compute_generation_metrics(gen: torch.Tensor, ref: torch.Tensor) -> Dict[str, float]:
     """
@@ -64,6 +81,8 @@ def compute_generation_metrics(gen: torch.Tensor, ref: torch.Tensor) -> Dict[str
     - mmd: mean distance from each reference to its closest generated cloud (fidelity, lower is better)
     - cov: share of references that are the nearest neighbour of some generated cloud (diversity, higher is better)
     - 1nna: leave-one-out 1-NN accuracy of telling generated from reference clouds (50% is ideal)
+    - 1nna_gen / 1nna_ref: the same accuracy over generated / reference clouds only. Both should be near 50%:
+      blurry samples are far from each other, so they get a low 1nna_gen and a high 1nna_ref that average to 50%
     """
     d_gr = pairwise_chamfer_distance(gen, ref)
     d_gg = pairwise_chamfer_distance(gen, gen)
@@ -78,4 +97,5 @@ def compute_generation_metrics(gen: torch.Tensor, ref: torch.Tensor) -> Dict[str
     gen_correct = d_gg.min(dim=1)[0] < d_gr.min(dim=1)[0]
     ref_correct = d_rr.min(dim=1)[0] < d_gr.min(dim=0)[0]
     one_nna = torch.cat([gen_correct, ref_correct]).float().mean().item()
-    return {"mmd": mmd, "cov": cov, "1nna": one_nna}
+    return {"mmd": mmd, "cov": cov, "1nna": one_nna,
+            "1nna_gen": gen_correct.float().mean().item(), "1nna_ref": ref_correct.float().mean().item()}
