@@ -82,11 +82,52 @@ class SpatialCrossAttention(nn.Module):
         return self.out_proj(out)
 
 
+class LocalPointAttention(nn.Module):
+    """Attention of each point over its k nearest neighbours, biased by their relative offset.
+
+    Global self-attention mixes the whole cloud; this gives each point the local surface shape around it.
+    Offsets only enter as a per-head logit bias and an attention-weighted mean offset, so nothing of size
+    (points x neighbours x hidden_dim) is built beyond the gathered keys and values.
+    """
+    def __init__(self, hidden_dim: int, num_heads: int = 8, k: int = 16, offset_scale: float = 10.0):
+        super().__init__()
+        self.k = k
+        self.num_heads = num_heads
+        self.head_dim = hidden_dim // num_heads
+        # Neighbour offsets are ~0.1 in network units; scaled to order 1 before the MLP
+        self.offset_scale = offset_scale
+        self.norm = nn.LayerNorm(hidden_dim, elementwise_affine=False, eps=1e-6)
+        self.qkv = nn.Linear(hidden_dim, hidden_dim * 3)
+        self.offset_bias = nn.Sequential(nn.Linear(3, 32), nn.GELU(), nn.Linear(32, num_heads))
+        self.offset_proj = nn.Linear(num_heads * 3, hidden_dim)
+        self.out_proj = nn.Linear(hidden_dim, hidden_dim)
+        # Zero output: the block starts as before and the layer grows in
+        nn.init.zeros_(self.out_proj.weight)
+        nn.init.zeros_(self.out_proj.bias)
+
+    def forward(self, x: torch.Tensor, pos: torch.Tensor) -> torch.Tensor:
+        B, N, C = x.shape
+        H, D, k = self.num_heads, self.head_dim, min(self.k, N)
+        with torch.no_grad():
+            idx = torch.cdist(pos.float(), pos.float()).topk(k, dim=-1, largest=False).indices  # (B, N, k), self included
+        flat = (idx + N * torch.arange(B, device=x.device).view(B, 1, 1)).reshape(-1)
+        gather = lambda t: t.reshape(B * N, -1).index_select(0, flat).view(B, N, k, -1)  # (B, N, D) -> (B, N, k, D)
+
+        q, key, v = self.qkv(self.norm(x)).chunk(3, dim=-1)
+        offset = (gather(pos) - pos.unsqueeze(2)) * self.offset_scale  # (B, N, k, 3)
+        logits = torch.einsum("bnhd,bnkhd->bnkh", q.view(B, N, H, D), gather(key).view(B, N, k, H, D)) / math.sqrt(D)
+        attn = (logits + self.offset_bias(offset)).softmax(dim=2)  # (B, N, k, H)
+        out = torch.einsum("bnkh,bnkhd->bnhd", attn, gather(v).view(B, N, k, H, D)).reshape(B, N, C)
+        mean_offset = torch.einsum("bnkh,bnkc->bnhc", attn, offset).reshape(B, N, H * 3)
+        return self.out_proj(out + self.offset_proj(mean_offset))
+
+
 class PointDiTBlock(nn.Module):
     """Point-DiT block with Self-Attention, Spatial Cross-Attention, and AdaLN modulation."""
-    def __init__(self, hidden_dim: int, num_heads: int = 8, spatial_distance_scale: float = 2.0):
+    def __init__(self, hidden_dim: int, num_heads: int = 8, spatial_distance_scale: float = 2.0, local_k: int = 0):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_dim, elementwise_affine=False, eps=1e-6)
+        self.local_attn = LocalPointAttention(hidden_dim, num_heads, local_k) if local_k > 0 else None
         self.self_attn = nn.MultiheadAttention(hidden_dim, num_heads, batch_first=True)
         
         self.norm2 = nn.LayerNorm(hidden_dim, elementwise_affine=False, eps=1e-6)
@@ -108,6 +149,9 @@ class PointDiTBlock(nn.Module):
         # need_weights=False lets PyTorch dispatch to fused SDPA kernels (no N x N attention matrix kept)
         sa_out, _ = self.self_attn(normed, normed, normed, need_weights=False)
         x = x + gate_msa.unsqueeze(1) * sa_out
+
+        if self.local_attn is not None:
+            x = x + self.local_attn(x, pts_pos)
         
         # Spatial Cross-Attention to skeleton joints
         ca_out = self.cross_attn(self.norm2(x), joint_mem, pts_pos, joint_pos, bias_weight)
@@ -133,7 +177,8 @@ class PointDiT(nn.Module):
         spatial_distance_scale: float = 2.0,
         data_scale: float = 1.0,
         fourier_octaves: int = 0,
-        time_scale: float = 1.0
+        time_scale: float = 1.0,
+        local_k: int = 0
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -141,6 +186,8 @@ class PointDiT(nn.Module):
         self.register_buffer("data_scale", torch.tensor(float(data_scale)))
         # The sinusoidal frequencies are at most 1, so t in [0, 1] is multiplied up to resolve late times
         self.register_buffer("time_scale", torch.tensor(float(time_scale)))
+        # Neighbours per point in the local attention (0 = none); saved so checkpoints rebuild it
+        self.register_buffer("local_k", torch.tensor(local_k))
 
         # Optional sin/cos of the coordinates at frequencies pi * 2^k: a linear layer alone resolves fine offsets poorly
         self.fourier_octaves = fourier_octaves
@@ -152,7 +199,7 @@ class PointDiT(nn.Module):
         self.null_joint_tokens = nn.Parameter(torch.zeros(1, num_joints, hidden_dim))
 
         self.blocks = nn.ModuleList([
-            PointDiTBlock(hidden_dim, num_heads, spatial_distance_scale) for _ in range(num_layers)
+            PointDiTBlock(hidden_dim, num_heads, spatial_distance_scale, local_k) for _ in range(num_layers)
         ])
         # Per-block velocity heads refining the clean-shape estimate used for the spatial bias
         self.pos_heads = nn.ModuleList([nn.Linear(hidden_dim, point_dim) for _ in range(num_layers)])
@@ -171,6 +218,7 @@ class PointDiT(nn.Module):
         # ... and checkpoints trained before data scaling worked in data units
         state_dict.setdefault(prefix + "data_scale", torch.tensor(1.0))
         state_dict.setdefault(prefix + "time_scale", torch.tensor(1.0))
+        state_dict.setdefault(prefix + "local_k", torch.tensor(0))
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def embed_points(self, x: torch.Tensor) -> torch.Tensor:

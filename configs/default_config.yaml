@@ -22,6 +22,7 @@ model:
   spatial_distance_scale: 2.0
   fourier_octaves: 0            # sin/cos input features at pi * 2^k, k < octaves (0 = raw coordinates only)
   data_scale: 4.0               # coordinates are multiplied by this inside the network (data std ~0.25 vs noise std 1)
+  local_k: 0                    # neighbours per point in a local attention layer of each block (0 = off)
   time_scale: 1.0               # t is multiplied by this before the sinusoidal embedding (frequencies <= 1; DiT uses 1000)
 
 training:
@@ -32,7 +33,7 @@ training:
   lr_schedule: "constant"       # "cosine": decay from learning_rate to min_lr_ratio * learning_rate over the run
   warmup_steps: 0               # linear warmup at the start (optimizer steps)
   min_lr_ratio: 0.0
-  mixed_precision: "no"         # "bf16": autocast forward and loss (about 3x faster, less memory)
+  mixed_precision: "bf16"       # "no" for full fp32; bf16 autocast is about 3x faster with the same quality
   save_every: 5
   device: "cuda"
   checkpoint_dir: "checkpoints"

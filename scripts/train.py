@@ -37,7 +37,8 @@ def main():
         spatial_distance_scale=cfg["model"]["spatial_distance_scale"] / cfg["model"].get("data_scale", 1.0) ** 2,
         data_scale=cfg["model"].get("data_scale", 1.0),
         fourier_octaves=cfg["model"].get("fourier_octaves", 0),
-        time_scale=cfg["model"].get("time_scale", 1.0)
+        time_scale=cfg["model"].get("time_scale", 1.0),
+        local_k=cfg["model"].get("local_k", 0)
     )
     fm = OptimalTransportFlowMatching(model, cond_drop_prob=cfg["training"].get("cond_drop_prob", 0.0),
                                       late_t_prob=cfg["training"].get("late_t_prob", 0.0),
