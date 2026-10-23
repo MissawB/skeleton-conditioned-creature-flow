@@ -29,7 +29,8 @@ def main():
         num_heads=cfg["model"]["num_heads"],
         num_joints=cfg["model"]["num_joints"],
         spatial_distance_scale=cfg["model"]["spatial_distance_scale"],
-        fourier_octaves=cfg["model"].get("fourier_octaves", 0)
+        fourier_octaves=cfg["model"].get("fourier_octaves", 0),
+        local_k=cfg["model"].get("local_k", 0)
     )
     
     ckpt_path = args.checkpoint or os.path.join(cfg["training"]["checkpoint_dir"],

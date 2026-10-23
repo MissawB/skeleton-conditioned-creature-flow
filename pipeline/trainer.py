@@ -1,3 +1,4 @@
+import math
 import os
 import torch
 from torch.utils.data import DataLoader
@@ -18,7 +19,12 @@ class Trainer:
         weight_decay: float = 1e-5,
         checkpoint_dir: str = "checkpoints",
         device: str = "cuda",
-        ema_decay: float = 0.995
+        ema_decay: float = 0.995,
+        lr_schedule: str = "constant",
+        num_epochs: int = 1,
+        warmup_steps: int = 0,
+        min_lr_ratio: float = 0.0,
+        mixed_precision: str = "no"
     ):
         self.fm = flow_matching
         self.device = torch.device(device if torch.cuda.is_available() and device == "cuda" else "cpu")
@@ -27,6 +33,18 @@ class Trainer:
         self.dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
         self.optimizer = torch.optim.AdamW(self.fm.model.parameters(), lr=lr, weight_decay=weight_decay)
         self.ema = EMA(self.fm.model, decay=ema_decay)
+        # Linear warmup, then cosine decay from lr to min_lr_ratio * lr over the whole run
+        total_steps = num_epochs * len(self.dataloader)
+        def lr_factor(step: int) -> float:
+            if step < warmup_steps:
+                return (step + 1) / warmup_steps
+            if lr_schedule == "constant":
+                return 1.0
+            progress = min(1.0, (step - warmup_steps) / max(1, total_steps - warmup_steps))
+            return min_lr_ratio + (1 - min_lr_ratio) * 0.5 * (1 + math.cos(math.pi * progress))
+        self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_factor)
+        # bf16 autocast keeps fp32 weights and needs no loss scaling
+        self.amp_dtype = torch.bfloat16 if mixed_precision == "bf16" else None
         self.checkpoint_dir = checkpoint_dir
         os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -40,10 +58,12 @@ class Trainer:
             noise = batch["noise"].to(self.device) if "noise" in batch else None
             
             self.optimizer.zero_grad()
-            loss = self.fm.compute_loss(pts, jts, x_0=noise)
+            with torch.autocast(self.device.type, dtype=self.amp_dtype, enabled=self.amp_dtype is not None):
+                loss = self.fm.compute_loss(pts, jts, x_0=noise)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.fm.model.parameters(), max_norm=1.0)
             self.optimizer.step()
+            self.scheduler.step()
             self.ema.update(self.fm.model)
             
             total_loss += loss.item()
@@ -57,6 +77,7 @@ class Trainer:
             "epoch": epoch,
             "model_state": self.fm.model.state_dict(),
             "ema_state": self.ema.state_dict(),
-            "optimizer_state": self.optimizer.state_dict()
+            "optimizer_state": self.optimizer.state_dict(),
+            "scheduler_state": self.scheduler.state_dict()
         }, path)
         return path

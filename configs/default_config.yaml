@@ -9,8 +9,8 @@ data:
     - bovidae
     - hippopotamidae
   cache_dir: "data/cache"
-  ot_noise_per_sample: 0        # OT-matched noise draws precomputed per shape (0 = independent coupling)
-  independent_noise_prob: 0.2   # hybrid coupling: share of independent noise during training
+  ot_noise_per_sample: 8        # OT-matched noise draws precomputed per shape (0 = independent coupling; first run ~30 min CPU, then cached)
+  independent_noise_prob: 0.0   # share of independent noise during training (any share brings the target noise back)
 
 model:
   point_dim: 3
@@ -22,12 +22,18 @@ model:
   spatial_distance_scale: 2.0
   fourier_octaves: 0            # sin/cos input features at pi * 2^k, k < octaves (0 = raw coordinates only)
   data_scale: 4.0               # coordinates are multiplied by this inside the network (data std ~0.25 vs noise std 1)
+  local_k: 0                    # neighbours per point in a local attention layer of each block (0 = off)
+  time_scale: 1.0               # t is multiplied by this before the sinusoidal embedding (frequencies <= 1; DiT uses 1000)
 
 training:
   batch_size: 16
   learning_rate: 0.0002
   weight_decay: 0.00001
   num_epochs: 90
+  lr_schedule: "constant"       # "cosine": decay from learning_rate to min_lr_ratio * learning_rate over the run
+  warmup_steps: 0               # linear warmup at the start (optimizer steps)
+  min_lr_ratio: 0.0
+  mixed_precision: "bf16"       # "no" for full fp32; bf16 autocast is about 3x faster with the same quality
   save_every: 5
   device: "cuda"
   checkpoint_dir: "checkpoints"
@@ -37,7 +43,7 @@ training:
   ema_decay: 0.995              # EMA of weights used for sampling (~200 steps, ~6 epochs here)
 
 sampling:
-  num_steps: 20
-  solver: "heun"
+  num_steps: 10
+  solver: "euler"               # OT-coupled paths are nearly straight: Euler 10 matches Heun 20
   guidance_scale: 1.0           # > 1 strengthens skeleton conditioning (needs cond_drop_prob > 0)
   export_dir: "viewer/data"

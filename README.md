@@ -11,13 +11,13 @@ Projet de recherche et portfolio en Deep Learning géométrique 3D : génératio
 
 ![Créatures générées à partir de squelettes : vues de profil et de dessus](docs/images/creatures.png)
 
-*Nuages de 2048 points générés en 20 pas de Heun à partir du squelette seul (en rouge). La dernière colonne est une chimère : corps de lion, cou et tête d'équidé.*
+*Nuages de 2048 points générés en 10 pas d'Euler à partir du squelette seul (en rouge). La dernière colonne est une chimère : corps de lion, cou et tête d'équidé.*
 
 ---
 
 ## 🌟 Points Forts du Projet
 
-- **Optimal Transport Flow Matching** : chemins linéaires $x_t = (1-t)x_0 + t x_1$ entre le bruit gaussien et la surface de la créature, échantillonnage en 15 à 20 pas d'ODE.
+- **Optimal Transport Flow Matching** : chemins linéaires $x_t = (1-t)x_0 + t x_1$ entre le bruit gaussien et la surface de la créature, avec un **couplage OT par forme** entre points de bruit et points de surface : trajectoires presque droites, échantillonnage en 10 pas d'Euler.
 - **Point-DiT** : modulation temporelle AdaLN-Zero, self-attention sur les points, et **cross-attention spatiale points $\to$ squelette** avec un biais de distance multi-échelle (voir [Conditionnement par le squelette](#-conditionnement-par-le-squelette)).
 - **Squelette cinématique à 35 articulations inspiré de SMAL**, pour 5 familles : félins, canidés, équidés, bovidés, hippopotamidés.
 - **Greffe cinématique d'hybrides** : un sous-arbre du squelette donneur (par ex. cou et tête) est recollé sur l'hôte au niveau de l'articulation de jonction.
@@ -34,16 +34,18 @@ Pour $x_0 \sim \mathcal{N}(0, I)$ et $x_1 \sim p_{\text{data}}(x \mid S)$ :
 $$x_t = (1 - t) x_0 + t x_1, \quad t \in [0, 1]$$
 $$u_t(x_t \mid x_0, x_1) = \frac{dx_t}{dt} = x_1 - x_0$$
 
-Le couplage entre $x_0$ et $x_1$ est indépendant (chemin OT *conditionnel*, au sens de Lipman et al., 2023) ; il n'y a pas de couplage OT par mini-batch.
+Le couplage entre $x_0$ et $x_1$ est un **transport optimal par forme** : pour chaque créature, les 2048 points de bruit sont appariés aux 2048 points de surface par une affectation exacte (algorithme hongrois, coût $\|x_0 - x_1\|^2$), dans l'esprit du couplage OT par mini-batch de Tong et al. (2023), mais à l'intérieur d'un nuage. Huit tirages de bruit apparié par forme sont précalculés une fois (`ot_noise_per_sample: 8`, environ 30 min de CPU, puis en cache).
 
 ### 2. Objectif d'Apprentissage
 $$\mathcal{L}_{\text{FM}}(\theta) = \mathbb{E}_{t, x_0, (x_1, S)} \left[ \| v_\theta(x_t, t, S) - (x_1 - x_0) \|^2 \right]$$
 
-Le réseau traite les points comme un ensemble (équivariance par permutation) : il ne peut apprendre que le champ de vitesse marginal, dont la variance est irréductible. La loss plafonne donc autour de 0.3 même quand le modèle reproduit bien les formes ; la Chamfer Distance est le critère pertinent.
+Avec un couplage indépendant, chaque point de bruit est associé à un point de surface tiré au hasard : la cible $x_1 - x_0$ a une variance irréductible énorme (loss d'environ 1.3 même quand le modèle reproduit bien les formes), et le détail de surface n'en représente qu'une infime partie. L'appariement OT rend la cible presque déterministe (loss d'environ 0.013), ce qui affine la surface (voir [Couplage OT](#couplage-ot-par-forme)).
 
 ### 3. Solveurs ODE d'Inférence
 - **Euler** : $x_{t + \Delta t} = x_t + \Delta t \cdot v_\theta(x_t, t, S)$
-- **Heun (ordre 2)** : prédiction-correction, utilisé par défaut.
+- **Heun (ordre 2)** : prédiction-correction, deux évaluations du réseau par pas.
+
+Avec le couplage OT, Euler en 10 pas (défaut) vaut Heun en 20 pas pour quatre fois moins d'évaluations du réseau.
 
 ---
 
@@ -60,7 +62,7 @@ $$\text{score}_{h}(i, k) = \frac{q_i \cdot k_k}{\sqrt{d}} - \lambda_h \, \| \hat
 
 ## 📊 Résultats
 
-Modèle de 10,4 M de paramètres entraîné 90 époques sur 500 créatures (100 par famille), soit environ 48 min sur une RTX 4060 Laptop (pic mémoire de 5,6 Go). Les ablations ci-dessous, jusqu'à la section sur la durée d'entraînement, ont été faites à 30 époques (16 min). La génération utilise une moyenne mobile exponentielle des poids (EMA, décroissance 0.995, soit un horizon d'environ 6 époques) plutôt que leur dernier état.
+Modèle de 10,4 M de paramètres entraîné 90 époques sur 500 créatures (100 par famille), soit environ 16 min sur une RTX 4060 Laptop en précision mixte bf16 (`mixed_precision`, 3,6 Go ; 48 min et 5,3 Go en fp32, pour la même qualité). Les ablations ci-dessous, jusqu'à la section sur la durée d'entraînement, ont été faites à 30 époques en fp32. La génération utilise une moyenne mobile exponentielle des poids (EMA, décroissance 0.995, soit un horizon d'environ 6 époques) plutôt que leur dernier état.
 
 **Protocole** (`scripts/evaluate_families.py`) : 40 squelettes jamais vus (8 par famille, seed disjointe de l'entraînement). Chaque créature générée est attribuée à la famille dont les 8 formes réelles de référence sont en moyenne les plus proches en Chamfer Distance.
 
@@ -126,11 +128,9 @@ Même à l'échelle 4, la surface restait floue. Le diagnostic écarte l'intégr
 
 Les métriques de génération sont calculées sur 200 formes générées contre 200 réelles (40 par famille). Un 1-NNA global proche de 50 % ne veut **pas** dire que les formes générées sont indiscernables : il se décompose en deux moitiés très inégales. Une vraie forme a toujours pour plus proche voisin une autre vraie forme (100 %), car les formes générées, plus diffuses, restent plus loin d'elle que ses voisines réelles. À l'inverse, une forme générée a presque toujours pour plus proche voisin une vraie forme (7 %) : elle se rapproche des vraies plus que des autres formes générées. Le score global n'est donc qu'une moyenne de ces deux erreurs opposées ; c'est la séparation des deux moitiés qui mesure l'écart restant, et `evaluate_generation.py` l'affiche. L'EMA devient aussi nettement utile : sans elle, l'écart médian remonte à 0.006–0.008. Tirer 30 % des instants d'entraînement dans $[0.9, 1]$ (`late_t_prob`), là où se résout le détail de surface, aide à 30 époques (MMD 0.00131 contre 0.00159) mais n'apporte presque plus rien à 90 (MMD 0.00093, un run) ; l'option reste désactivée.
 
-Le modèle publié et la visionneuse utilisent le générateur v4, `data_scale: 4` et 90 époques (seed 0).
+### Nombre de pas d'intégration (couplage indépendant)
 
-### Nombre de pas d'intégration
-
-Sur le modèle à 90 époques (seed 0), en faisant varier `sampling.num_steps` et `sampling.solver` :
+Sur le modèle à 90 époques (seed 0), avant le couplage OT, en faisant varier `sampling.num_steps` et `sampling.solver` :
 
 | Solveur, pas | MMD-CD | COV-CD | Écart médian à la surface |
 |---|---|---|---|
@@ -138,13 +138,52 @@ Sur le modèle à 90 époques (seed 0), en faisant varier `sampling.num_steps` e
 | Heun 3 | 0.00176 | 40 % | 0.0108 |
 | Heun 5 | 0.00125 | 46 % | 0.0073 |
 | **Heun 10** | 0.00108 | 57 % | 0.0059 |
-| **Heun 20** (défaut) | 0.00101 | 56 % | 0.0053 |
+| **Heun 20** | 0.00101 | 56 % | 0.0053 |
 | Heun 40 | 0.00098 | 56 % | 0.0047 |
 | Euler 10 | 0.00161 | 18 % | 0.0097 |
 | Euler 20 | 0.00110 | 35 % | 0.0067 |
 | Euler 40 | 0.00100 | 46 % | 0.0049 |
 
-Chaque pas de Heun coûte deux évaluations du réseau. Heun 10 (20 évaluations) garde presque toute la qualité pour deux fois moins de calcul que le défaut, et fait mieux qu'Euler 20 à coût égal, surtout en couverture. En dessous de 5 pas, la qualité s'effondre : descendre à 1 ou 2 pas demanderait de redresser les trajectoires (reflow) ou de distiller le modèle.
+Chaque pas de Heun coûte deux évaluations du réseau. Heun 10 (20 évaluations) garde presque toute la qualité pour deux fois moins de calcul que le défaut, et fait mieux qu'Euler 20 à coût égal, surtout en couverture. En dessous de 5 pas, la qualité s'effondre. Le couplage OT ci-dessous change ce tableau.
+
+### Couplage OT par forme
+
+Après 90 époques, la surface plafonnait autour de 0.005 d'écart médian, et aucun des leviers suivants ne la faisait vraiment descendre (un run chacun, 200 contre 200, référence 0.0050 à 0.0053) :
+
+| Essai | Écart médian à la surface | MMD-CD |
+|---|---|---|
+| Taux d'apprentissage en cosinus avec échauffement (`lr_schedule`) | 0.0052 | 0.00102 |
+| Modèle élargi (largeur 384, 23 M de paramètres) | 0.0049 | 0.00094 |
+| Temps multiplié par 1000 avant l'encodage sinusoïdal (`time_scale`, 2 runs) | 0.0050 | 0.00095 à 0.00096 |
+| Attention locale sur les 8 plus proches voisins dans chaque bloc (`local_k`) | 0.0054 | 0.00106 |
+
+Le plateau n'est pas non plus un défaut de généralisation (même écart, 0.0053, sur des squelettes d'entraînement et sur des squelettes nouveaux) ni une ambiguïté d'échelle (l'écart reste entre 0.005 et 0.008 pour des rayons d'os de 0.04 à 0.32, alors qu'une erreur d'échelle le rendrait proportionnel au rayon). Un flou de largeur constante, qui résiste à la capacité, à la durée et à l'optimiseur, désigne plutôt la cible d'apprentissage : avec un couplage indépendant, le signal du détail de surface est noyé dans la variance de $x_1 - x_0$.
+
+| 90 époques, bf16 | Couplage indépendant | OT + 20 % de bruit indépendant | **OT pur** (2 runs) |
+|---|---|---|---|
+| Loss finale | 1.25 | 0.29 | **0.013** |
+| Écart médian à la surface | 0.0052 | 0.0094 | **0.0040 / 0.0042** |
+| Biais vers l'extérieur (écart signé moyen) | +0.0019 | +0.0033 | **+0.0003 / +0.0002** |
+| MMD-CD | 0.00097 | 0.00162 | **0.00092 / 0.00095** |
+| COV-CD | 55 % | 50 % | 57 % / 52 % |
+| Famille reconnue | 100 % | 100 % | **100 % / 100 %** |
+| CD vers sa famille | 0.0010 | 0.0018 | **0.0010 / 0.0010** |
+
+L'appariement pur réduit l'écart à la surface d'environ 20 % et fait presque disparaître le biais vers l'extérieur. Mélanger du bruit indépendant, même 20 %, ramène la variance et fait pire que la référence. Avec le générateur v2, le couplage OT faisait chuter la reconnaissance de famille à 42 % ; avec le générateur v4, il n'y a plus de perte.
+
+Les trajectoires deviennent presque droites, ce qui rend l'échantillonnage bien moins coûteux (run 0) :
+
+| Solveur, pas | Évaluations du réseau | Écart médian à la surface | MMD-CD | COV-CD |
+|---|---|---|---|---|
+| Heun 2 | 4 | 0.0071 | 0.00124 | 57 % |
+| Heun 3 | 6 | 0.0058 | 0.00107 | 56 % |
+| Heun 5 | 10 | 0.0048 | 0.00098 | 57 % |
+| Euler 5 | 5 | 0.0039 | 0.00093 | 57 % |
+| **Euler 10** (défaut) | 10 | **0.0038** | **0.00092** | 58 % |
+| Heun 10 | 20 | 0.0042 | 0.00094 | 57 % |
+| Heun 20 | 40 | 0.0040 | 0.00092 | 57 % |
+
+Euler 5 fait aussi bien que Heun 20 avec huit fois moins d'évaluations ; en Euler, le 1-NNA côté générées remonte un peu (7 à 11 %, contre 0 à 3 % en Heun). Le modèle publié et la visionneuse utilisent le générateur v4, `data_scale: 4`, le couplage OT pur, 90 époques en bf16 (run 0) et Euler 10.
 
 ---
 
@@ -152,11 +191,11 @@ Chaque pas de Heun coûte deux évaluations du réseau. Heun 10 (20 évaluations
 
 - **Données procédurales, pas SMAL** : les formes sont des cylindres échantillonnés autour d'un squelette paramétrique inspiré de la topologie SMAL, pas le modèle SMAL lui-même (`shape_betas` est inutilisé). La variabilité intra-famille est faible (±3 % sur les proportions).
 - **100 % de reconnaissance, sur un test facile** : avec le générateur v4, les 5 familles sont séparées par construction (proportions, écartement, port de tête) et leur variabilité interne est faible ; ce score mesure que le modèle suit le squelette, pas qu'il généralise à de vrais animaux.
-- **Précision** : les formes générées restent environ 1,5 fois plus éloignées de leur famille que deux créatures réelles entre elles (0.0011 contre 0.0007), et leur surface reste plus diffuse que celle des vraies formes (écart médian 0.0051 contre 0.0004). Un classifieur au plus proche voisin reconnaît encore toutes les vraies formes (1-NNA côté réelles : 100 %).
+- **Précision** : les formes générées restent environ 1,5 fois plus éloignées de leur famille que deux créatures réelles entre elles (0.0010 contre 0.0007), et leur surface reste plus diffuse que celle des vraies formes (écart médian 0.0038 contre 0.0004). Un classifieur au plus proche voisin reconnaît encore toutes les vraies formes (1-NNA côté réelles : 100 %).
 - **L'autoguidage n'aide pas ici** (`--guide-checkpoint`, avec un petit modèle de 8 époques comme guide) : à $w = 1.5$, il porte une seed à 100 % de reconnaissance (modèles du générateur v3), mais divise presque la couverture par deux (COV 62 % → 32 %) ; au-delà, les formes se dégradent. Restreindre le guidage à un intervalle de $t$ (`--guidance-interval`) ne fait que l'atténuer.
 - **Greffe** : la jonction aligne le sous-arbre donneur par translation, sans mise à l'échelle ni rotation.
 - **Une seule seed par variante intermédiaire** dans l'ablation. Le modèle final varie de 90 à 95 % selon la seed (3 runs), et l'évaluation sur 40 squelettes a elle-même une incertitude d'environ ±8 points.
-- **Le couplage OT par forme n'aide pas encore** (`ot_noise_per_sample` dans la config, désactivé par défaut) : il rend l'échantillonnage en 2 à 5 pas bien meilleur (CD 0.0063 en 2 pas, contre 0.049), mais fait tomber la reconnaissance de famille à 42 % en 20 pas, avec 20 % comme avec 50 % de bruit indépendant. Le guidage sans classifieur (`cond_drop_prob: 0.1` à l'entraînement, `guidance_scale` à la génération) remonte ce score à 55–60 % pour $w$ entre 1.5 et 2 (un seul run), encore loin du modèle final ; à partir de $w = 2.5$, les formes se dégradent.
+- **Coût du couplage OT** : l'appariement exact coûte environ 2 s par tirage et par forme ; il est précalculé une fois pour 8 tirages par forme (environ 30 min sur 12 cœurs pour 500 formes). Doubler le jeu de données doublerait ce coût, et 8 tirages par forme limitent la diversité du bruit vu à l'entraînement.
 
 ---
 

@@ -36,7 +36,9 @@ def main():
         # Distances grow with data_scale, so the bias scale shrinks by its square to keep the same attention
         spatial_distance_scale=cfg["model"]["spatial_distance_scale"] / cfg["model"].get("data_scale", 1.0) ** 2,
         data_scale=cfg["model"].get("data_scale", 1.0),
-        fourier_octaves=cfg["model"].get("fourier_octaves", 0)
+        fourier_octaves=cfg["model"].get("fourier_octaves", 0),
+        time_scale=cfg["model"].get("time_scale", 1.0),
+        local_k=cfg["model"].get("local_k", 0)
     )
     fm = OptimalTransportFlowMatching(model, cond_drop_prob=cfg["training"].get("cond_drop_prob", 0.0),
                                       late_t_prob=cfg["training"].get("late_t_prob", 0.0),
@@ -50,7 +52,12 @@ def main():
         weight_decay=cfg["training"]["weight_decay"],
         checkpoint_dir=cfg["training"]["checkpoint_dir"],
         device=cfg["training"]["device"],
-        ema_decay=cfg["training"].get("ema_decay", 0.995)
+        ema_decay=cfg["training"].get("ema_decay", 0.995),
+        lr_schedule=cfg["training"].get("lr_schedule", "constant"),
+        num_epochs=cfg["training"]["num_epochs"],
+        warmup_steps=cfg["training"].get("warmup_steps", 0),
+        min_lr_ratio=cfg["training"].get("min_lr_ratio", 0.0),
+        mixed_precision=cfg["training"].get("mixed_precision", "no")
     )
     
     epochs = cfg["training"]["num_epochs"]

@@ -22,7 +22,8 @@ def load_model(cfg, ckpt_path, device, raw_weights=False):
         num_heads=state["blocks.0.cross_attn.log_spatial_scale"].shape[0],
         num_joints=cfg["model"]["num_joints"],
         spatial_distance_scale=cfg["model"]["spatial_distance_scale"],
-        fourier_octaves=(state["point_proj.weight"].shape[1] // cfg["model"]["point_dim"] - 1) // 2
+        fourier_octaves=(state["point_proj.weight"].shape[1] // cfg["model"]["point_dim"] - 1) // 2,
+        local_k=int(state.get("local_k", 0))
     )
     model.load_state_dict(state)
     print(f"Loaded checkpoint from {ckpt_path}")
