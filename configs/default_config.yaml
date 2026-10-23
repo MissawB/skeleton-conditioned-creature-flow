@@ -9,8 +9,8 @@ data:
     - bovidae
     - hippopotamidae
   cache_dir: "data/cache"
-  ot_noise_per_sample: 0        # OT-matched noise draws precomputed per shape (0 = independent coupling)
-  independent_noise_prob: 0.2   # hybrid coupling: share of independent noise during training
+  ot_noise_per_sample: 8        # OT-matched noise draws precomputed per shape (0 = independent coupling; first run ~30 min CPU, then cached)
+  independent_noise_prob: 0.0   # share of independent noise during training (any share brings the target noise back)
 
 model:
   point_dim: 3
@@ -43,7 +43,7 @@ training:
   ema_decay: 0.995              # EMA of weights used for sampling (~200 steps, ~6 epochs here)
 
 sampling:
-  num_steps: 20
-  solver: "heun"
+  num_steps: 10
+  solver: "euler"               # OT-coupled paths are nearly straight: Euler 10 matches Heun 20
   guidance_scale: 1.0           # > 1 strengthens skeleton conditioning (needs cond_drop_prob > 0)
   export_dir: "viewer/data"
