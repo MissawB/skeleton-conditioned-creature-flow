@@ -23,7 +23,8 @@ class Trainer:
         lr_schedule: str = "constant",
         num_epochs: int = 1,
         warmup_steps: int = 0,
-        min_lr_ratio: float = 0.0
+        min_lr_ratio: float = 0.0,
+        mixed_precision: str = "no"
     ):
         self.fm = flow_matching
         self.device = torch.device(device if torch.cuda.is_available() and device == "cuda" else "cpu")
@@ -42,6 +43,8 @@ class Trainer:
             progress = min(1.0, (step - warmup_steps) / max(1, total_steps - warmup_steps))
             return min_lr_ratio + (1 - min_lr_ratio) * 0.5 * (1 + math.cos(math.pi * progress))
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_factor)
+        # bf16 autocast keeps fp32 weights and needs no loss scaling
+        self.amp_dtype = torch.bfloat16 if mixed_precision == "bf16" else None
         self.checkpoint_dir = checkpoint_dir
         os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -55,7 +58,8 @@ class Trainer:
             noise = batch["noise"].to(self.device) if "noise" in batch else None
             
             self.optimizer.zero_grad()
-            loss = self.fm.compute_loss(pts, jts, x_0=noise)
+            with torch.autocast(self.device.type, dtype=self.amp_dtype, enabled=self.amp_dtype is not None):
+                loss = self.fm.compute_loss(pts, jts, x_0=noise)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.fm.model.parameters(), max_norm=1.0)
             self.optimizer.step()

@@ -41,3 +41,14 @@ def test_cosine_schedule_warms_up_then_decays_to_min_lr(tmp_path):
     # Halfway through the decay the rate sits between the peak and the floor; at the end it reaches the floor
     assert 1e-4 < lrs[0] < 1e-3
     assert abs(lrs[1] - 1e-4) < 1e-9
+
+def test_bf16_mixed_precision_trains_with_fp32_weights(tmp_path):
+    dataset = CreatureDataset(num_samples_per_family=2, num_points=64, augment=False, cache_dir=None)
+    model = PointDiT(point_dim=3, hidden_dim=32, num_layers=1, num_heads=2, num_joints=35)
+    trainer = Trainer(OptimalTransportFlowMatching(model), dataset, batch_size=2, lr=1e-3,
+                      checkpoint_dir=str(tmp_path), device="cpu", mixed_precision="bf16")
+    before = model.point_proj.weight.detach().clone()
+    loss = trainer.train_epoch(0)
+    assert torch.isfinite(torch.tensor(loss))
+    assert model.point_proj.weight.dtype == torch.float32
+    assert not torch.equal(before, model.point_proj.weight)

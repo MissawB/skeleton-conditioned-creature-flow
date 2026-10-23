@@ -54,7 +54,8 @@ def main():
         lr_schedule=cfg["training"].get("lr_schedule", "constant"),
         num_epochs=cfg["training"]["num_epochs"],
         warmup_steps=cfg["training"].get("warmup_steps", 0),
-        min_lr_ratio=cfg["training"].get("min_lr_ratio", 0.0)
+        min_lr_ratio=cfg["training"].get("min_lr_ratio", 0.0),
+        mixed_precision=cfg["training"].get("mixed_precision", "no")
     )
     
     epochs = cfg["training"]["num_epochs"]
