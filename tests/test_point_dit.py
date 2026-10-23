@@ -43,3 +43,19 @@ def test_shape_estimate_refinement_starts_at_identity():
     # Zero-initialised refinement heads: every block initially biases attention with x_t itself
     for head in model.pos_heads:
         assert torch.count_nonzero(head.weight) == 0 and torch.count_nonzero(head.bias) == 0
+
+def test_time_scale_multiplies_t_before_embedding_and_old_checkpoints_default_to_one():
+    torch.manual_seed(0)
+    scaled = PointDiT(point_dim=3, hidden_dim=32, num_layers=1, num_heads=2, num_joints=35, time_scale=1000.0)
+    plain = PointDiT(point_dim=3, hidden_dim=32, num_layers=1, num_heads=2, num_joints=35)
+    plain.load_state_dict({k: v for k, v in scaled.state_dict().items() if k != "time_scale"})
+    assert plain.time_scale.item() == 1.0
+
+    seen = []
+    scaled.time_embedder.register_forward_hook(lambda m, inp, out: seen.append(inp[0]))
+    with torch.no_grad():
+        scaled(torch.randn(1, 16, 3), torch.tensor([0.95]), torch.randn(1, 35, 3))
+        assert torch.allclose(seen[0], torch.tensor([950.0]))
+        # Near t = 1 the unscaled embedding barely moves, the scaled one does
+        drift = lambda m: (m.time_embedder(torch.tensor([0.9]) * m.time_scale) - m.time_embedder(torch.tensor([1.0]) * m.time_scale)).norm()
+        assert drift(scaled) > 5 * drift(plain)

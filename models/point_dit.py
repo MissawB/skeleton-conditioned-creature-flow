@@ -132,12 +132,15 @@ class PointDiT(nn.Module):
         num_joints: int = 35,
         spatial_distance_scale: float = 2.0,
         data_scale: float = 1.0,
-        fourier_octaves: int = 0
+        fourier_octaves: int = 0,
+        time_scale: float = 1.0
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
         # Coordinates are multiplied by data_scale before entering the network (saved with the weights)
         self.register_buffer("data_scale", torch.tensor(float(data_scale)))
+        # The sinusoidal frequencies are at most 1, so t in [0, 1] is multiplied up to resolve late times
+        self.register_buffer("time_scale", torch.tensor(float(time_scale)))
 
         # Optional sin/cos of the coordinates at frequencies pi * 2^k: a linear layer alone resolves fine offsets poorly
         self.fourier_octaves = fourier_octaves
@@ -167,6 +170,7 @@ class PointDiT(nn.Module):
         state_dict.setdefault(prefix + "null_joint_tokens", self.null_joint_tokens.detach().clone())
         # ... and checkpoints trained before data scaling worked in data units
         state_dict.setdefault(prefix + "data_scale", torch.tensor(1.0))
+        state_dict.setdefault(prefix + "time_scale", torch.tensor(1.0))
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def embed_points(self, x: torch.Tensor) -> torch.Tensor:
@@ -188,7 +192,7 @@ class PointDiT(nn.Module):
         Returns:
             (B, N, 3) predicted velocities
         """
-        t_emb = self.time_embedder(t)
+        t_emb = self.time_embedder(t * self.time_scale)
         joint_mem = self.skeleton_encoder(joints)
         bias_weight = None
         if cond_mask is not None:

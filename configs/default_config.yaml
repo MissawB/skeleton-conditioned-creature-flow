@@ -22,6 +22,7 @@ model:
   spatial_distance_scale: 2.0
   fourier_octaves: 0            # sin/cos input features at pi * 2^k, k < octaves (0 = raw coordinates only)
   data_scale: 4.0               # coordinates are multiplied by this inside the network (data std ~0.25 vs noise std 1)
+  time_scale: 1.0               # t is multiplied by this before the sinusoidal embedding (frequencies <= 1; DiT uses 1000)
 
 training:
   batch_size: 16
