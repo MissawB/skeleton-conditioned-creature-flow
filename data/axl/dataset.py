@@ -58,13 +58,13 @@ class AXLDataset(Dataset):
     """Creatures from the shard cache built by scripts/build_axl_cache.py."""
 
     def __init__(self, cache_dir: str, split: str, num_points: int = 2048, augment: bool = True,
-                 augment_cfg: Optional[AugmentConfig] = None, seed: int = 0):
+                 augment_cfg: Optional[AugmentConfig] = None, seed: int = 0, max_shards: Optional[int] = None):
         super().__init__()
         self.num_points = num_points
         self.augment = augment
         self.augment_cfg = augment_cfg or AugmentConfig()
         self.seed = seed
-        self.shards = sorted(p for p in (Path(cache_dir) / split).glob("rg*.npz") if not p.name.endswith(".tmp.npz"))
+        self.shards = sorted(p for p in (Path(cache_dir) / split).glob("rg*.npz") if not p.name.endswith(".tmp.npz"))[:max_shards]
         self._arrays = {}
 
         shard_ids, positions, uuids, groups, self._meta = [], [], [], [], []
@@ -83,6 +83,12 @@ class AXLDataset(Dataset):
 
     def __len__(self) -> int:
         return len(self._index)
+
+    def __getstate__(self):
+        # Memory maps are reopened in each DataLoader worker instead of being pickled with the dataset
+        state = self.__dict__.copy()
+        state["_arrays"] = {}
+        return state
 
     def _shard_arrays(self, s: int) -> dict:
         # Opened lazily, once per worker process

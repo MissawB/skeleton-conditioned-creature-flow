@@ -52,3 +52,24 @@ def test_bf16_mixed_precision_trains_with_fp32_weights(tmp_path):
     assert torch.isfinite(torch.tensor(loss))
     assert model.point_proj.weight.dtype == torch.float32
     assert not torch.equal(before, model.point_proj.weight)
+
+
+def test_resume_restores_model_ema_optimizer_and_epoch(tmp_path):
+    from data.dataset import CreatureDataset
+    from models.flow_matching import OptimalTransportFlowMatching
+    from models.point_dit import PointDiT
+    from pipeline.trainer import Trainer
+    ds = CreatureDataset(num_samples_per_family=1, num_points=64, augment=False, cache_dir=None)
+    make = lambda: Trainer(OptimalTransportFlowMatching(PointDiT(hidden_dim=32, num_layers=1, num_heads=4)), ds,
+                           batch_size=5, checkpoint_dir=str(tmp_path), device="cpu")
+    first = make()
+    first.train_epoch(1)
+    path = first.save_checkpoint(1)
+    second = make()
+    assert second.load_checkpoint(path) == 1
+    for a, b in zip(first.fm.model.parameters(), second.fm.model.parameters()):
+        assert torch.equal(a, b)
+    for a, b in zip(first.ema.model.parameters(), second.ema.model.parameters()):
+        assert torch.equal(a, b)
+    assert second.ema.num_updates == first.ema.num_updates
+    assert second.optimizer.state_dict()["state"].keys() == first.optimizer.state_dict()["state"].keys()

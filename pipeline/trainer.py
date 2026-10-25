@@ -24,13 +24,17 @@ class Trainer:
         num_epochs: int = 1,
         warmup_steps: int = 0,
         min_lr_ratio: float = 0.0,
-        mixed_precision: str = "no"
+        mixed_precision: str = "no",
+        sampler=None,
+        collate_fn=None,
+        num_workers: int = 0
     ):
         self.fm = flow_matching
         self.device = torch.device(device if torch.cuda.is_available() and device == "cuda" else "cpu")
         self.fm.model.to(self.device)
         
-        self.dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
+        self.dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=sampler is None, sampler=sampler, drop_last=True,
+                                     collate_fn=collate_fn, num_workers=num_workers, persistent_workers=num_workers > 0)
         self.optimizer = torch.optim.AdamW(self.fm.model.parameters(), lr=lr, weight_decay=weight_decay)
         self.ema = EMA(self.fm.model, decay=ema_decay)
         # Linear warmup, then cosine decay from lr to min_lr_ratio * lr over the whole run
@@ -53,13 +57,16 @@ class Trainer:
         total_loss = 0.0
         
         for batch in self.dataloader:
-            pts = batch["points"].to(self.device)
-            jts = batch["joints"].to(self.device)
-            noise = batch["noise"].to(self.device) if "noise" in batch else None
-            
             self.optimizer.zero_grad()
             with torch.autocast(self.device.type, dtype=self.amp_dtype, enabled=self.amp_dtype is not None):
-                loss = self.fm.compute_loss(pts, jts, x_0=noise)
+                if hasattr(self.fm, "loss_from_batch"):
+                    # Flows with richer batches (free skeletons, masks) read what they need themselves
+                    loss = self.fm.loss_from_batch(batch)
+                else:
+                    pts = batch["points"].to(self.device)
+                    jts = batch["joints"].to(self.device)
+                    noise = batch["noise"].to(self.device) if "noise" in batch else None
+                    loss = self.fm.compute_loss(pts, jts, x_0=noise)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.fm.model.parameters(), max_norm=1.0)
             self.optimizer.step()
@@ -78,6 +85,17 @@ class Trainer:
             "model_state": self.fm.model.state_dict(),
             "ema_state": self.ema.state_dict(),
             "optimizer_state": self.optimizer.state_dict(),
-            "scheduler_state": self.scheduler.state_dict()
+            "scheduler_state": self.scheduler.state_dict(),
+            "ema_updates": self.ema.num_updates
         }, path)
         return path
+
+    def load_checkpoint(self, path: str) -> int:
+        """Restores model, EMA, optimizer and schedule to continue a run; returns the epoch the checkpoint ended."""
+        state = torch.load(path, map_location=self.device, weights_only=False)
+        self.fm.model.load_state_dict(state["model_state"])
+        self.ema.model.load_state_dict(state["ema_state"])
+        self.ema.num_updates = state.get("ema_updates", 10 ** 6)  # older checkpoints: past the EMA warmup
+        self.optimizer.load_state_dict(state["optimizer_state"])
+        self.scheduler.load_state_dict(state["scheduler_state"])
+        return state["epoch"]

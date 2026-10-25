@@ -54,3 +54,8 @@ def test_dataset_reads_shards_lazily_and_returns_unit_radius_points(tmp_path):
     assert item["presence"].tolist() == [1.0] * 35 and item["parents"][0] == -1
     batch = collate_skeletons([ds[0], ds[1], ds[2]])
     assert batch["joints"].shape == (3, 35, 3)
+
+
+def test_max_shards_limits_the_dataset(tmp_path):
+    cache = _cache(tmp_path)
+    assert len(AXLDataset(str(cache), "train", augment=False, max_shards=1)) < len(AXLDataset(str(cache), "train", augment=False))

@@ -1,0 +1,30 @@
+# Free-skeleton creature model trained on the Articulation-XL cache (stage 2a)
+data:
+  cache_dir: "data/cache/axl"
+  num_points: 2048
+  animal_ratio: 0.7          # share of animals and mythical creatures among training draws
+  num_workers: 6
+
+model:
+  hidden_dim: 256
+  num_layers: 6
+  num_heads: 8
+  z_dim: 64
+  data_scale: 3.5            # measured: augmented creatures have std 0.288, so std * 3.5 ~ 1 like the noise
+
+training:
+  batch_size: 32
+  learning_rate: 0.0002
+  weight_decay: 0.00001
+  num_epochs: 10
+  mixed_precision: "bf16"
+  ema_decay: 0.995
+  kl_weight: 0.001
+  z_drop_prob: 0.3
+  ot_iters: 20
+  save_every: 2
+  checkpoint_dir: "checkpoints/axl_v1"
+  device: "cuda"
+
+sampling:
+  num_steps: 10
