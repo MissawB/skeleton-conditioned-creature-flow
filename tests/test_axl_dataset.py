@@ -59,3 +59,9 @@ def test_dataset_reads_shards_lazily_and_returns_unit_radius_points(tmp_path):
 def test_max_shards_limits_the_dataset(tmp_path):
     cache = _cache(tmp_path)
     assert len(AXLDataset(str(cache), "train", augment=False, max_shards=1)) < len(AXLDataset(str(cache), "train", augment=False))
+
+
+def test_joint_names_are_read_from_the_shard(tmp_path):
+    ds = AXLDataset(str(_cache(tmp_path)), "train", augment=False)
+    i = list(ds.uuids).index("stick")
+    assert ds.joint_names(i) == ["j0", "j1"]

@@ -1,4 +1,5 @@
 """Training dataset over the Articulation-XL shards: skeleton-driven augmentation, 70/30 sampling, padded skeletons."""
+import json
 import struct
 import zipfile
 from pathlib import Path
@@ -89,6 +90,12 @@ class AXLDataset(Dataset):
         state = self.__dict__.copy()
         state["_arrays"] = {}
         return state
+
+    def joint_names(self, i: int) -> list:
+        """Joint names of creature i (read from its shard on demand; only reports need them)."""
+        s, k = self._index[i]
+        with np.load(self.shards[s]) as shard:
+            return json.loads(str(shard["names"]))[k]
 
     def _shard_arrays(self, s: int) -> dict:
         # Opened lazily, once per worker process
