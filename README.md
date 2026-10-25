@@ -187,7 +187,7 @@ Euler 5 fait aussi bien que Heun 20 avec huit fois moins d'évaluations ; en Eul
 
 ### Perturbation du bruit apparié (Not-So-OT)
 
-Not-So-OT (ICLR 2025) trouve, sur ShapeNet, que l'OT pur fait moins bien qu'un OT légèrement perturbé, $x_0' = \sqrt{1-eta}\,x_0 + \sqrt{eta}\,arepsilon$ (`data.ot_noise_beta`). Ce n'est pas le même mélange que les « 20 % de bruit indépendant » plus haut, qui remplaçaient des tirages entiers. Sur nos créatures (200 contre 200, Euler 10, un run par β sauf mention) :
+Not-So-OT (ICLR 2025) trouve, sur ShapeNet, que l'OT pur fait moins bien qu'un OT légèrement perturbé, $x_0' = \sqrt{1-\beta}\,x_0 + \sqrt{\beta}\,\varepsilon$ (`data.ot_noise_beta`). Ce n'est pas le même mélange que les « 20 % de bruit indépendant » plus haut, qui remplaçaient des tirages entiers. Sur nos créatures (200 contre 200, Euler 10, un run par β sauf mention) :
 
 | | β = 0 (2 runs) | β = 0.05 | β = 0.2 |
 |---|---|---|---|
