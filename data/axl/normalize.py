@@ -24,15 +24,21 @@ def _find_head(names: List[str], depth: np.ndarray) -> Optional[int]:
             return min(hits, key=lambda i: depth[i])
     return None
 
+def _words(name: str) -> List[str]:
+    """Lower-case words of a joint name, splitting camelCase, digits and separators ('mixamorig_LeftArm' -> mixamorig, left, arm)."""
+    return [w.lower() for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", name)]
+
 def _side(name: str) -> int:
     """+1 for a left joint, -1 for a right joint, 0 otherwise."""
-    n = _clean(name)
-    tokens = [t for t in re.split(r"[^a-z]+", n) if t]
-    if n.startswith("left") or "left" in tokens or (tokens and (tokens[0] == "l" or tokens[-1] == "l")):
+    words = _words(_clean_keep_case(name))
+    if "left" in words or "l" in words:
         return 1
-    if n.startswith("right") or "right" in tokens or (tokens and (tokens[0] == "r" or tokens[-1] == "r")):
+    if "right" in words or "r" in words:
         return -1
     return 0
+
+def _clean_keep_case(name: str) -> str:
+    return re.split(r"[:|]", name)[-1]
 
 def _up_score(up: np.ndarray, joints: np.ndarray, parents: np.ndarray, feet: List[int], head: Optional[int], extent: float) -> float:
     height = joints @ up

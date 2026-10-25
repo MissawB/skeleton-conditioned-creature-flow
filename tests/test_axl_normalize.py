@@ -76,3 +76,23 @@ def test_normalize_centres_and_scales_to_unit_radius():
     assert abs(np.linalg.norm(points, axis=1).max() - 1) < 1e-5
     assert np.allclose((points.min(0) + points.max(0)) / 2, 0, atol=1e-5)
     assert np.allclose(joints, (inst["joints"] * 3 + 5 - (inst["points"] * 3 + 5).min(0) / 2 - (inst["points"] * 3 + 5).max(0) / 2) * scale, atol=1e-4)
+
+
+def test_left_right_names_in_prefixed_camel_case_are_recognised():
+    joints = np.array([[0, 0, 0], [0, 0.5, 0], [0, 0.9, 0], [0, 0.6, -0.4], [0, 0.6, 0.4],
+                       [0, -0.8, -0.15], [0, -0.8, 0.15], [0.12, -0.9, -0.15], [0.12, -0.9, 0.15]], np.float32)
+    parents = np.array([-1, 0, 1, 1, 1, 0, 0, 5, 6])
+    points = np.concatenate([joints + np.random.default_rng(i).normal(0, 0.02, joints.shape) for i in range(20)])
+    Ry = rotation_about_y(2.2)
+    for names in (
+        ["mixamorig_Hips", "mixamorig_Spine", "mixamorig_Head", "mixamorig_LeftHand", "mixamorig_RightHand",
+         "mixamorig_LeftFoot", "mixamorig_RightFoot", "mixamorig_LeftToeBase", "mixamorig_RightToeBase"],
+        ["LowManHips", "LowManSpine", "LowManHead", "LowManLeftHand", "LowManRightHand",
+         "LowManLeftFoot", "LowManRightFoot", "LowManLeftToeBase", "LowManRightToeBase"],
+        ["Bip01 Pelvis", "Bip01 Spine", "Bip01 Head", "Bip01 L Hand", "Bip01 R Hand",
+         "Bip01 L Foot", "Bip01 R Foot", "Bip01 L Toe0", "Bip01 R Toe0"],
+    ):
+        R, how = canonical_rotation(points @ Ry, joints @ Ry, parents, names)
+        j = joints @ Ry @ R
+        assert how == "lateral", names[0]
+        assert angle_between(j[3] - j[4], [0, 0, -1]) < np.radians(10), names[0]
