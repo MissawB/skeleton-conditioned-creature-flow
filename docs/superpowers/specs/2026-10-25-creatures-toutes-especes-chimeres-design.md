@@ -127,6 +127,7 @@ Direction retenue (choix de conception, à confirmer quand on y sera) :
 
 - **Catalogue** de toutes les créatures, avec recherche, choix de deux ou trois parents, curseur de pourcentage par parent, et **bouton aléatoire**.
 - **Génération en direct**, puisque les combinaisons ne se précalculent pas. Choix par défaut : faire tourner le modèle **dans le navigateur** (ONNX Runtime Web, WebGPU), ce qui reste gratuit et compatible avec le Space statique actuel `MissawB/creature-flow-viewer`. Repli si c'est trop lent : un Space Gradio sur CPU gratuit.
+- Un bouton **« Détailler le visage »** lance la passe visage et rapproche la caméra de la tête.
 - L'animation du flux $t = 0 \to 1$ et l'affichage du squelette restent ceux de la visionneuse actuelle (`viewer/app.js`, Three.js).
 - **Points ouverts** :
   - Articulation-XL n'a pas de noms lisibles. Il faudra en tirer de `fileIdentifier`, des annotations Objaverse ou de légendes existantes, et les vignettes devront être rendues depuis nos nuages.
