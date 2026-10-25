@@ -58,7 +58,7 @@ class SpatialCrossAttention(nn.Module):
         self.v_proj = nn.Linear(hidden_dim, hidden_dim)
         self.out_proj = nn.Linear(hidden_dim, hidden_dim)
 
-    def forward(self, pts_feat: torch.Tensor, joint_mem: torch.Tensor, pts_pos: torch.Tensor, joint_pos: torch.Tensor, bias_weight: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, pts_feat: torch.Tensor, joint_mem: torch.Tensor, pts_pos: torch.Tensor, joint_pos: torch.Tensor, bias_weight: Optional[torch.Tensor] = None, key_bias: Optional[torch.Tensor] = None) -> torch.Tensor:
         B, N, D = pts_feat.shape
         _, K, _ = joint_mem.shape
         
@@ -76,6 +76,8 @@ class SpatialCrossAttention(nn.Module):
             spatial_bias = spatial_bias * bias_weight  # 0 for unconditional samples: joint positions must not leak
         
         attn = attn + spatial_bias
+        if key_bias is not None:
+            attn = attn + key_bias  # (B, 1, 1, K): -inf on absent joints, log presence on fading ones
         attn = torch.softmax(attn, dim=-1)
         
         out = (attn @ v).transpose(1, 2).contiguous().view(B, N, D)
@@ -141,7 +143,7 @@ class PointDiTBlock(nn.Module):
         )
         self.adaln = AdaLNModulation(hidden_dim)
 
-    def forward(self, x: torch.Tensor, t_emb: torch.Tensor, joint_mem: torch.Tensor, pts_pos: torch.Tensor, joint_pos: torch.Tensor, bias_weight: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, t_emb: torch.Tensor, joint_mem: torch.Tensor, pts_pos: torch.Tensor, joint_pos: torch.Tensor, bias_weight: Optional[torch.Tensor] = None, key_bias: Optional[torch.Tensor] = None) -> torch.Tensor:
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaln(t_emb)
         
         # Self-Attention on points
@@ -154,7 +156,7 @@ class PointDiTBlock(nn.Module):
             x = x + self.local_attn(x, pts_pos)
         
         # Spatial Cross-Attention to skeleton joints
-        ca_out = self.cross_attn(self.norm2(x), joint_mem, pts_pos, joint_pos, bias_weight)
+        ca_out = self.cross_attn(self.norm2(x), joint_mem, pts_pos, joint_pos, bias_weight, key_bias)
         x = x + ca_out
         
         # Feed-Forward Network
