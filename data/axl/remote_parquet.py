@@ -4,18 +4,33 @@ so the 25 GB mesh table never has to sit on disk.
 """
 import io
 import os
+import time
+import urllib.error
 import urllib.request
 import pyarrow.parquet as pq
 
 MIRROR_URL = "https://huggingface.co/datasets/chibifire/datasource-articulation-xl2-parquet/resolve/main/"
+TIMEOUT_S = 60
+RETRIES = 6
+
+def _fetch(request: urllib.request.Request):
+    """(final url, headers, body) with a timeout, retried with backoff around both the request and the body read:
+    a sleeping laptop or a dropped Wi-Fi must not hang or kill a long build."""
+    for attempt in range(RETRIES):
+        try:
+            with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:
+                return response.geturl(), response.headers, response.read()
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == RETRIES - 1:
+                raise
+            time.sleep(min(2 ** attempt * 5, 120))
 
 class RangeFile(io.RawIOBase):
     """Seekable read-only view of a remote file; follows the Hub redirect once, then reuses the final URL."""
 
     def __init__(self, url: str):
-        with urllib.request.urlopen(urllib.request.Request(url, method="HEAD")) as response:
-            self.url = response.geturl()
-            self.size = int(response.headers["Content-Length"])
+        self.url, headers, _ = _fetch(urllib.request.Request(url, method="HEAD"))
+        self.size = int(headers["Content-Length"])
         self.pos = 0
 
     def readable(self) -> bool:
@@ -37,8 +52,7 @@ class RangeFile(io.RawIOBase):
         if n <= 0:
             return b""
         request = urllib.request.Request(self.url, headers={"Range": f"bytes={self.pos}-{self.pos + n - 1}"})
-        with urllib.request.urlopen(request) as response:
-            data = response.read()
+        _, _, data = _fetch(request)
         self.pos += len(data)
         return data
 
