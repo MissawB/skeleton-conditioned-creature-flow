@@ -183,7 +183,23 @@ Les trajectoires deviennent presque droites, ce qui rend l'échantillonnage bien
 | Heun 10 | 20 | 0.0042 | 0.00094 | 57 % |
 | Heun 20 | 40 | 0.0040 | 0.00092 | 57 % |
 
-Euler 5 fait aussi bien que Heun 20 avec huit fois moins d'évaluations ; en Euler, le 1-NNA côté générées remonte un peu (7 à 11 %, contre 0 à 3 % en Heun). ### Durée d'entraînement avec le couplage OT
+Euler 5 fait aussi bien que Heun 20 avec huit fois moins d'évaluations ; en Euler, le 1-NNA côté générées remonte un peu (7 à 11 %, contre 0 à 3 % en Heun).
+
+### Perturbation du bruit apparié (Not-So-OT)
+
+Not-So-OT (ICLR 2025) trouve, sur ShapeNet, que l'OT pur fait moins bien qu'un OT légèrement perturbé, $x_0' = \sqrt{1-eta}\,x_0 + \sqrt{eta}\,arepsilon$ (`data.ot_noise_beta`). Ce n'est pas le même mélange que les « 20 % de bruit indépendant » plus haut, qui remplaçaient des tirages entiers. Sur nos créatures (200 contre 200, Euler 10, un run par β sauf mention) :
+
+| | β = 0 (2 runs) | β = 0.05 | β = 0.2 |
+|---|---|---|---|
+| Écart médian à la surface, 90 époques | 0.0038 / 0.0040 | 0.0036 | 0.0038 |
+| MMD-CD, 90 époques | 0.00092 / 0.00094 | 0.00089 | 0.00089 |
+| COV-CD, 90 époques | 58 % / 56 % | 54 % | 51 % |
+| Écart médian à la surface, 180 époques | 0.0029 / 0.0030 | 0.0029 | |
+| MMD-CD, 180 époques | 0.00084 / 0.00085 | 0.00083 | |
+
+L'avance de β = 0.05 à 90 époques est de l'ordre de l'écart entre deux runs de β = 0, et elle disparaît à 180 époques. La perturbation n'apporte rien de mesurable ici, et la couverture baisse quand β augmente : β reste à 0. La différence avec Not-So-OT tient sans doute aux données (des formes simples autour d'un squelette, conditionnées, contre ShapeNet sans condition) et à la métrique.
+
+### Durée d'entraînement avec le couplage OT
 
 Avec la cible devenue presque déterministe, la loss continue de baisser bien après 90 époques (0.0129 à 90, 0.0103 à 360), et la surface s'affine avec elle (200 contre 200, Euler 10) :
 
