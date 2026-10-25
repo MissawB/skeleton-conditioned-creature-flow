@@ -5,3 +5,5 @@ checkpoints/
 data/cache/
 *.log
 .venv/
+docs/axl/audit_*.png
+docs/axl/audit_index.json

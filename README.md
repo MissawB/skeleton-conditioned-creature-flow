@@ -216,6 +216,18 @@ Le gain vient de la durée, pas du calendrier : un taux constant fait aussi bien
 
 Le modèle publié et la visionneuse utilisent le générateur v4, `data_scale: 4`, le couplage OT pur, 180 époques en bf16 à taux constant (run 0) et Euler 10.
 
+## 🧬 Données Articulation-XL (en cours)
+
+Étape suivante : passer des quadrupèdes procéduraux à des créatures de toutes espèces (conception : `docs/superpowers/specs/2026-10-25-creatures-toutes-especes-chimeres-design.md`). `scripts/build_axl_cache.py` lit [Articulation-XL2.0](https://huggingface.co/datasets/Seed3D/Articulation-XL2.0) (CC-BY-4.0, via [son miroir Parquet](https://huggingface.co/datasets/chibifire/datasource-articulation-xl2-parquet)) groupe de lignes par groupe de lignes, sans télécharger les 25 Go de maillages. Il garde les créatures (animaux, créatures mythiques, personnages, jouets), échantillonne 8192 points avec leurs poids de peau, oriente chaque modèle (haut +Y, avant +X) et le ramène au rayon 1. `data/axl/dataset.py` déforme ensuite chaque créature par son squelette : longueur des os, épaisseur, pose, parties qui rétrécissent ou disparaissent. Il tire aussi 70 % d'animaux.
+
+| | Entraînement | Test |
+|---|---|---|
+| Créatures retenues | 40 218 (10 948 animaux) | 1 736 (494 animaux) |
+| Taille du cache | 4,8 Go | 0,2 Go |
+| Orientation, échecs nets à l'œil (200 créatures) | 6 % (12,5 % au pire) | |
+
+Rapport complet et planches : `docs/axl/report.md`. Les données dérivées ne sont pas republiées.
+
 ---
 
 ## ⚠️ Limites

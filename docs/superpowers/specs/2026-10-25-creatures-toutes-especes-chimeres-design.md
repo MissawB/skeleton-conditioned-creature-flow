@@ -89,7 +89,7 @@ Les étapes sont séquentielles : chacune dépend de la précédente. Les étape
 5. **Répartition** : on reprend la séparation train/test d'Articulation-XL. Tout objet évalué n'a été vu à l'entraînement sous aucune de ses déformations.
 6. **Stockage compact** : demi-précision et 4 poids de peau principaux par point, pour tenir dans le budget disque (§3).
 
-**Terminé quand** : un script reproductible produit le cache. Un rapport donne le nombre de modèles retenus par catégorie, le taux d'échec de normalisation et des planches de contrôle visuel (une vingtaine de créatures de catégories différentes, de face et de profil, avec leur squelette).
+**Mesuré (2026-10-26)** : 40 218 créatures d'entraînement retenues (10 948 animaux, 29 270 humanoïdes), 1 736 en test, cache de 4,8 Go à 8192 points. Orientation décidée par les noms gauche/droite pour 89 %, par la géométrie pour 9 %, par la tête pour 2 %. Audit à l'œil sur 200 créatures : 6 % d'échecs nets (haut faux 4 %, vue de face 2 %), 12,5 % au pire ; sens avant/arrière non vérifié. Détails : `docs/axl/report.md`. **Terminé quand** : un script reproductible produit le cache. Un rapport donne le nombre de modèles retenus par catégorie, le taux d'échec de normalisation et des planches de contrôle visuel (une vingtaine de créatures de catégories différentes, de face et de profil, avec leur squelette).
 
 ### Étape 2 : modèle à squelette libre, dense et rapide à entraîner
 
