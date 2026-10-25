@@ -61,7 +61,7 @@ def test_presence_zero_removes_the_subtree_points():
     w = np.array([[1, 0, 0, 0], [1, 0, 0, 0]], np.float32)
     _, joints, _ = deform(points, idx, w, JOINTS, PARENTS, params)
     assert np.allclose(joints[2], joints[1])
-    assert keep_mask(idx, w, params.presence).tolist() == [True, False]
+    assert keep_mask(points, idx, w, JOINTS, PARENTS, params.presence).tolist() == [True, False]
 
 
 def test_partial_presence_shrinks_the_subtree_towards_its_attachment():
@@ -91,3 +91,37 @@ def test_random_params_respect_the_config():
         assert np.allclose(np.einsum("jab,jcb->jac", p.rotations, p.rotations), np.eye(3), atol=1e-5)
         angles = np.degrees(np.arccos(np.clip((np.trace(p.rotations, axis1=1, axis2=2) - 1) / 2, -1, 1)))
         assert (angles <= 20.0 + 1e-3).all()
+
+
+def test_presence_zero_on_a_leaf_removes_the_bone_that_leads_to_it():
+    # points of bone 1->2 are weighted on joint 1 (outside the faded subtree {2})
+    params = DeformParams.identity(3)
+    params.presence[2] = 0.0
+    points = np.array([[0.5, 0.1, 0], [1.5, 0.1, 0]], np.float32)
+    idx = np.array([[0, 0, 0, 0], [1, 0, 0, 0]], np.uint8)
+    w = np.array([[1, 0, 0, 0], [1, 0, 0, 0]], np.float32)
+    assert keep_mask(points, idx, w, JOINTS, PARENTS, params.presence).tolist() == [True, False]
+
+
+def test_partial_presence_shrinks_the_last_bone_and_its_surface():
+    params = DeformParams.identity(3)
+    params.presence[2] = 0.5
+    p, i, w = _rigid([[1.5, 0.1, 0]], 1)
+    out, joints, area = deform(p, i, w, JOINTS, PARENTS, params)
+    assert np.allclose(joints[2], [1.5, 0, 0])
+    assert np.allclose(out, [[1.25, 0.05, 0]]) and np.allclose(area, 0.25)
+
+
+def test_fading_subtree_points_lose_surface_weight():
+    params = DeformParams.identity(3)
+    params.presence[2] = 0.5
+    p, i, w = _rigid([[2.2, 0.1, 0]], 2)
+    _, _, area = deform(p, i, w, JOINTS, PARENTS, params)
+    assert np.allclose(area, 0.25)
+
+
+def test_random_params_never_rotate_the_root():
+    parents = np.array([-1, 0, 1, 2, 1, 4, 0, 6, 7])
+    cfg = AugmentConfig(pose_prob=1.0, pose_joint_frac=1.0)
+    for seed in range(10):
+        assert np.allclose(random_params(parents, np.random.default_rng(seed), cfg).rotations[0], np.eye(3))

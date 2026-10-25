@@ -36,6 +36,8 @@ def process_model(row: dict, num_points: int, rng: np.random.Generator) -> dict:
     parents = parents_from_bones(np.asarray(row["bones"]), int(row["root_index"]), num_joints)
 
     vertices = np.asarray(row["vertices"], dtype=np.float64).reshape(-1, 3)
+    if int(row["n_rows"]) != len(vertices) or int(row["n_cols"]) != num_joints:
+        raise ValueError("skin shape does not match mesh and skeleton")
     faces = np.asarray(row["faces"], dtype=np.int64).reshape(-1, 3)
     points, face_idx, bary = sample_surface(vertices, faces, num_points, rng)
     skin = vertex_skin(row["row"], row["col"], row["value"], row["n_rows"], row["n_cols"], vertices, joints, parents)
@@ -127,6 +129,8 @@ def build_row_group(split: str, index: int, out_dir: Path, num_points: int, tags
             groups.append(group)
         except ValueError as error:
             rejects[row["uuid"]] = str(error)
+        except Exception as error:  # a malformed record must not stop the build
+            rejects[row["uuid"]] = f"{type(error).__name__}: {error}"
     shard.with_name(shard.stem + ".rejects.json").write_text(json.dumps(rejects, indent=0))
     _write_shard(shard, kept, groups)
     return len(kept), len(rejects)

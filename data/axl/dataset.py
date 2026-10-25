@@ -106,7 +106,7 @@ class AXLDataset(Dataset):
             skin_w = np.asarray(arrays["skin_w"][p0:p1], dtype=np.float32)
             skin_w /= np.maximum(skin_w.sum(1, keepdims=True), 1e-6)
             params = random_params(parents, rng, self.augment_cfg)
-            keep = keep_mask(skin_idx, skin_w, params.presence)
+            keep = keep_mask(points, skin_idx, skin_w, joints, parents, params.presence)
             if keep.any():
                 points, joints, area = deform(points, skin_idx, skin_w, joints, parents, params)
                 points = resample(points, area, keep, self.num_points, rng)

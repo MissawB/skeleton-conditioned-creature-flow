@@ -67,3 +67,27 @@ def test_file_size_comes_from_a_one_byte_range_request(monkeypatch):
     monkeypatch.setattr(remote_parquet.urllib.request, "urlopen", fake_urlopen)
     f = remote_parquet.RangeFile("https://huggingface.co/x")
     assert f.size == 25_000_000_000 and f.url == "https://cdn.example/file"
+
+
+def test_truncated_bodies_are_retried(monkeypatch):
+    import http.client
+    import io
+    from data.axl import remote_parquet
+
+    attempts = []
+
+    class Response(io.BytesIO):
+        headers = {"Content-Range": "bytes 0-0/10"}
+
+        def geturl(self):
+            return "https://cdn.example/file"
+
+    def fake_urlopen(request, timeout=None):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise http.client.IncompleteRead(b"")
+        return Response(b"0")
+
+    monkeypatch.setattr(remote_parquet.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(remote_parquet.time, "sleep", lambda s: None)
+    assert remote_parquet.RangeFile("https://huggingface.co/x").size == 10

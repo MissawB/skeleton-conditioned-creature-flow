@@ -2,6 +2,7 @@
 Reads the Parquet mirror of Articulation-XL2.0 with HTTP Range requests, one row group at a time,
 so the 25 GB mesh table never has to sit on disk.
 """
+import http.client
 import io
 import os
 import time
@@ -20,7 +21,7 @@ def _fetch(request: urllib.request.Request):
         try:
             with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:
                 return response.geturl(), response.headers, response.read()
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, ConnectionError):
             if attempt == RETRIES - 1:
                 raise
             time.sleep(min(2 ** attempt * 5, 120))

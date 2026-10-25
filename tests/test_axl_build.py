@@ -88,3 +88,21 @@ def test_row_groups_are_read_as_numpy_geometry(tmp_path):
     assert isinstance(row["vertices"], np.ndarray) and row["vertices"].shape[1] == 3
     assert isinstance(row["faces"], np.ndarray) and row["faces"].shape[1] == 3
     assert isinstance(row["value"], np.ndarray) and isinstance(row["joints"], np.ndarray)
+
+
+def test_skin_matrix_wider_than_the_skeleton_is_rejected():
+    row = _quadruped("wide")
+    row["n_cols"] = 40
+    with pytest.raises(ValueError, match="skin"):
+        process_model(row, 64, np.random.default_rng(0))
+
+
+def test_unexpected_errors_are_logged_as_rejections(tmp_path):
+    mirror = tmp_path / "mirror"
+    bad = _quadruped("bad")
+    bad["root_index"] = None  # a TypeError, not a ValueError
+    write_mirror(mirror, "train", [_quadruped("ok"), bad], {"ok": ["animal"], "bad": ["animal"]})
+    build_split("train", tmp_path / "cache", num_points=128, open_fn=lambda p: pq.ParquetFile(mirror / p))
+    with np.load(tmp_path / "cache" / "train" / "rg0000.npz") as shard:
+        assert list(shard["uuids"]) == ["ok"]
+    assert "bad" in json.loads((tmp_path / "cache" / "train" / "rg0000.rejects.json").read_text())
