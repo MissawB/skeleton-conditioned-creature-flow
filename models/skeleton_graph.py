@@ -11,20 +11,16 @@ REL_SELF, REL_PARENT, REL_CHILD, REL_SIBLING, REL_OTHER = 0, 1, 2, 3, 4
 MAX_TREE_DIST = 5
 
 def _ancestors(parents: torch.Tensor, joint_mask: torch.Tensor) -> torch.Tensor:
-    """(B, J, J) float, [b, i, a] = 1 if a is i itself or one of its ancestors."""
+    """(B, J, J) float, [b, i, a] = 1 if a is i itself or one of its ancestors: transitive closure of
+    'self or parent' by repeated squaring, log2(J) batched matmuls instead of one step per tree level."""
     B, J = parents.shape
-    batch = torch.arange(B, device=parents.device)[:, None].expand(B, J)
-    anc = torch.zeros(B, J, J, device=parents.device)
-    current = torch.arange(J, device=parents.device).expand(B, J).clone()
-    alive = joint_mask.clone()
-    rows = torch.arange(J, device=parents.device).expand(B, J)
-    for _ in range(J):
-        if not alive.any():
-            break
-        anc[batch[alive], rows[alive], current[alive]] = 1.0
-        nxt = parents.gather(1, current.clamp_min(0))
-        alive = alive & (nxt >= 0)
-        current = torch.where(alive, nxt, current)
+    step = torch.eye(J, device=parents.device).expand(B, J, J).clone()
+    step.scatter_(2, parents.clamp_min(0)[..., None], 1.0)
+    step = step * (parents >= 0)[..., None] + torch.eye(J, device=parents.device) * (parents < 0)[..., None]
+    step = step * joint_mask[:, :, None] * joint_mask[:, None, :]
+    anc = step
+    for _ in range(max(1, (J - 1).bit_length())):
+        anc = (anc @ anc).clamp_max(1.0)
     return anc
 
 def tree_depth_batch(parents: torch.Tensor, joint_mask: torch.Tensor) -> torch.Tensor:
