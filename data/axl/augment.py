@@ -1,0 +1,195 @@
+"""
+Skeleton-driven augmentation of skinned point clouds: bone length, girth, small pose changes and
+subtrees that shrink or vanish (so the model learns parts that fade, which chimera blending needs).
+
+A joint's skin weights cover the segment from that joint to its children (measured on Articulation-XL),
+so a point weighted on joint j is stretched along that segment and turns with joint j's frame.
+"""
+from dataclasses import dataclass, field
+from typing import Tuple
+import numpy as np
+
+@dataclass
+class AugmentConfig:
+    bone_scale: Tuple[float, float] = (0.8, 1.25)
+    girth: Tuple[float, float] = (0.85, 1.2)
+    pose_prob: float = 0.5
+    pose_joint_frac: float = 0.3
+    pose_max_deg: float = 20.0
+    subtree_prob: float = 0.2
+    subtree_max_frac: float = 1 / 3
+    subtree_remove_prob: float = 0.3
+
+@dataclass
+class DeformParams:
+    bone_scale: np.ndarray
+    girth: np.ndarray
+    rotations: np.ndarray
+    presence: np.ndarray = field(default=None)
+
+    @staticmethod
+    def identity(num_joints: int) -> "DeformParams":
+        return DeformParams(
+            bone_scale=np.ones(num_joints, np.float32),
+            girth=np.ones(num_joints, np.float32),
+            rotations=np.tile(np.eye(3, dtype=np.float32), (num_joints, 1, 1)),
+            presence=np.ones(num_joints, np.float32),
+        )
+
+def _children(parents: np.ndarray):
+    children = [[] for _ in parents]
+    for j, p in enumerate(parents):
+        if p >= 0:
+            children[p].append(j)
+    return children
+
+def _topological_order(parents: np.ndarray) -> list:
+    children = _children(parents)
+    order = [int(np.where(parents == -1)[0][0])]
+    for j in order:
+        order.extend(children[j])
+    return order
+
+def _rotation(axis: np.ndarray, angle: float) -> np.ndarray:
+    axis = axis / np.linalg.norm(axis)
+    K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+    return np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * K @ K
+
+def _subtree(children, root: int) -> list:
+    nodes = [root]
+    for j in nodes:
+        nodes.extend(children[j])
+    return nodes
+
+def random_params(parents: np.ndarray, rng: np.random.Generator, cfg: AugmentConfig) -> DeformParams:
+    num_joints = len(parents)
+    params = DeformParams.identity(num_joints)
+    params.bone_scale[:] = rng.uniform(*cfg.bone_scale, num_joints)
+    params.girth[:] = rng.uniform(*cfg.girth, num_joints)
+
+    if rng.random() < cfg.pose_prob:
+        count = int(round(cfg.pose_joint_frac * num_joints))
+        # The root is left alone: rotating it would tilt the whole creature out of its canonical pose
+        candidates = np.where(parents >= 0)[0]
+        for j in rng.choice(candidates, size=min(count, len(candidates)), replace=False):
+            angle = np.radians(rng.uniform(-cfg.pose_max_deg, cfg.pose_max_deg))
+            params.rotations[j] = _rotation(rng.normal(size=3), angle)
+
+    if rng.random() < cfg.subtree_prob:
+        children = _children(parents)
+        limit = cfg.subtree_max_frac * num_joints
+        roots = [j for j in range(num_joints) if parents[j] >= 0 and len(_subtree(children, j)) <= limit]
+        if roots:
+            root = roots[rng.integers(len(roots))]
+            level = 0.0 if rng.random() < cfg.subtree_remove_prob else rng.uniform(0.0, 1.0)
+            params.presence[_subtree(children, root)] = level
+    return params
+
+def deform(points, skin_idx, skin_w, joints, parents, params: DeformParams):
+    """Returns (points (N,3), joints (J,3), point_area_scale (N,)) after skinning by per-joint affine maps."""
+    joints = np.asarray(joints, dtype=np.float64)
+    points = np.asarray(points, dtype=np.float64)
+    children = _children(parents)
+    order = _topological_order(parents)
+    num_joints = len(joints)
+
+    # Segment owned by each joint: towards its children, or continuing its parent bone for a leaf
+    axes = np.zeros((num_joints, 3))
+    stretch = np.ones(num_joints)
+    for j in range(num_joints):
+        if children[j]:
+            direction = joints[children[j]].mean(0) - joints[j]
+            stretch[j] = params.bone_scale[children[j]].mean()
+        elif parents[j] >= 0:
+            direction = joints[j] - joints[parents[j]]
+        else:
+            direction = np.array([1.0, 0.0, 0.0])
+        norm = np.linalg.norm(direction)
+        axes[j] = direction / norm if norm > 1e-12 else np.array([1.0, 0.0, 0.0])
+
+    new_joints = joints.copy()
+    frames = np.zeros((num_joints, 3, 3))
+    for j in order:
+        p = parents[j]
+        if p < 0:
+            frames[j] = params.rotations[j]
+        else:
+            new_joints[j] = new_joints[p] + frames[p] @ (joints[j] - joints[p]) * params.bone_scale[j]
+            frames[j] = frames[p] @ params.rotations[j]
+
+    # Shrink fading subtrees towards the joint they hang from; points follow the unshrunk joints first
+    posed_joints = new_joints.copy()
+    anchor = _fade_anchors(parents, params.presence)
+    for j in order:
+        if anchor[j] >= 0:
+            new_joints[j] = new_joints[anchor[j]] + params.presence[j] * (new_joints[j] - new_joints[anchor[j]])
+
+    out = np.zeros_like(points)
+    area = np.zeros(len(points))
+    skin_idx = np.asarray(skin_idx, dtype=np.int64)
+    for k in range(skin_idx.shape[1]):
+        j = skin_idx[:, k]
+        weight = np.asarray(skin_w[:, k], dtype=np.float64)
+        local = points - joints[j]
+        axial = (local * axes[j]).sum(1, keepdims=True) * axes[j]
+        local = axial * stretch[j, None] + (local - axial) * params.girth[j, None]
+        moved = posed_joints[j] + np.einsum("nab,nb->na", frames[j], local)
+        factor, base_joint = _point_fade(points, j, joints, parents, params.presence, anchor, children)
+        fading = base_joint >= 0
+        if fading.any():
+            base = new_joints[base_joint[fading]]
+            moved[fading] = base + factor[fading, None] * (moved[fading] - base)
+        out += weight[:, None] * moved
+        # A part shrunk by s keeps about s^2 of its surface
+        area += weight * stretch[j] * params.girth[j] * factor ** 2
+    return out.astype(np.float32), new_joints.astype(np.float32), area.astype(np.float32)
+
+def _fade_anchors(parents: np.ndarray, presence: np.ndarray) -> np.ndarray:
+    """For each joint inside a fading subtree, the present joint the subtree hangs from; -1 elsewhere."""
+    anchor = np.full(len(parents), -1)
+    for j in _topological_order(parents):
+        p = parents[j]
+        if p >= 0 and presence[j] < 1:
+            anchor[j] = anchor[p] if presence[p] < 1 else p
+    return anchor
+
+def _point_fade(points, joint_of_point, joints, parents, presence, anchor, children):
+    """
+    (fade factor, joint it fades towards or -1) per point, for points skinned on joint_of_point.
+    Inside a fading subtree the subtree's own level applies. A present joint's points lie on the bones to its
+    children (ruling T3), so a point nearest to the bone of a fading child fades with that child, towards this joint.
+    """
+    factor = np.ones(len(points))
+    base = np.full(len(points), -1)
+    inside = anchor[joint_of_point] >= 0
+    factor[inside] = presence[joint_of_point[inside]]
+    base[inside] = anchor[joint_of_point[inside]]
+    for p in np.unique(joint_of_point[~inside]):
+        kids = children[p]
+        if not kids or all(presence[c] >= 1 for c in kids):
+            continue
+        sel = np.where((joint_of_point == p) & ~inside)[0]
+        a = joints[p]
+        ab = joints[kids] - a
+        t = np.clip(((points[sel, None] - a) * ab[None]).sum(2) / np.maximum((ab * ab).sum(1), 1e-12), 0, 1)
+        dist = np.linalg.norm(points[sel, None] - (a + t[..., None] * ab[None]), axis=2)
+        nearest = np.asarray(kids)[dist.argmin(1)]
+        fading = presence[nearest] < 1
+        factor[sel[fading]] = presence[nearest[fading]]
+        base[sel[fading]] = p
+    return factor, base
+
+def keep_mask(points, skin_idx, skin_w, joints, parents, presence) -> np.ndarray:
+    """Points still present: their dominant joint's part, including the bone leading to a removed child, is not gone."""
+    points = np.asarray(points, dtype=np.float64)
+    joints = np.asarray(joints, dtype=np.float64)
+    dominant = skin_idx[np.arange(len(skin_idx)), np.argmax(skin_w, axis=1)].astype(np.int64)
+    factor, _ = _point_fade(points, dominant, joints, parents, presence, _fade_anchors(parents, presence), _children(parents))
+    return factor > 0
+
+def resample(points: np.ndarray, point_area_scale: np.ndarray, keep: np.ndarray, num_points: int, rng: np.random.Generator) -> np.ndarray:
+    """Draws num_points with replacement among kept points, in proportion to the surface each one now stands for."""
+    candidates = np.where(keep)[0]
+    weights = np.asarray(point_area_scale, dtype=np.float64)[candidates]
+    chosen = rng.choice(candidates, size=num_points, p=weights / weights.sum())
+    return points[chosen]

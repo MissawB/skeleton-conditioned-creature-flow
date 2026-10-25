@@ -183,7 +183,23 @@ Les trajectoires deviennent presque droites, ce qui rend l'échantillonnage bien
 | Heun 10 | 20 | 0.0042 | 0.00094 | 57 % |
 | Heun 20 | 40 | 0.0040 | 0.00092 | 57 % |
 
-Euler 5 fait aussi bien que Heun 20 avec huit fois moins d'évaluations ; en Euler, le 1-NNA côté générées remonte un peu (7 à 11 %, contre 0 à 3 % en Heun). ### Durée d'entraînement avec le couplage OT
+Euler 5 fait aussi bien que Heun 20 avec huit fois moins d'évaluations ; en Euler, le 1-NNA côté générées remonte un peu (7 à 11 %, contre 0 à 3 % en Heun).
+
+### Perturbation du bruit apparié (Not-So-OT)
+
+Not-So-OT (ICLR 2025) trouve, sur ShapeNet, que l'OT pur fait moins bien qu'un OT légèrement perturbé, $x_0' = \sqrt{1-\beta}\,x_0 + \sqrt{\beta}\,\varepsilon$ (`data.ot_noise_beta`). Ce n'est pas le même mélange que les « 20 % de bruit indépendant » plus haut, qui remplaçaient des tirages entiers. Sur nos créatures (200 contre 200, Euler 10, un run par β sauf mention) :
+
+| | β = 0 (2 runs) | β = 0.05 | β = 0.2 |
+|---|---|---|---|
+| Écart médian à la surface, 90 époques | 0.0038 / 0.0040 | 0.0036 | 0.0038 |
+| MMD-CD, 90 époques | 0.00092 / 0.00094 | 0.00089 | 0.00089 |
+| COV-CD, 90 époques | 58 % / 56 % | 54 % | 51 % |
+| Écart médian à la surface, 180 époques | 0.0029 / 0.0030 | 0.0029 | |
+| MMD-CD, 180 époques | 0.00084 / 0.00085 | 0.00083 | |
+
+L'avance de β = 0.05 à 90 époques est de l'ordre de l'écart entre deux runs de β = 0, et elle disparaît à 180 époques. La perturbation n'apporte rien de mesurable ici, et la couverture baisse quand β augmente : β reste à 0. La différence avec Not-So-OT tient sans doute aux données (des formes simples autour d'un squelette, conditionnées, contre ShapeNet sans condition) et à la métrique.
+
+### Durée d'entraînement avec le couplage OT
 
 Avec la cible devenue presque déterministe, la loss continue de baisser bien après 90 époques (0.0129 à 90, 0.0103 à 360), et la surface s'affine avec elle (200 contre 200, Euler 10) :
 
@@ -199,6 +215,18 @@ Avec la cible devenue presque déterministe, la loss continue de baisser bien ap
 Le gain vient de la durée, pas du calendrier : un taux constant fait aussi bien qu'une décroissance en cosinus. Le run de 360 époques passe par 0.0031 à 180 époques et 0.0028 à 270 : le gain continue mais ralentit, et 180 époques est le défaut (environ 32 min). Réduire les tirages de bruit OT de 8 à 2 par forme ne change rien à 90 époques (écart médian 0.0041 contre 0.0040, MMD 0.00094 contre 0.00092) : la diversité du bruit apparié ne limite pas le modèle.
 
 Le modèle publié et la visionneuse utilisent le générateur v4, `data_scale: 4`, le couplage OT pur, 180 époques en bf16 à taux constant (run 0) et Euler 10.
+
+## 🧬 Données Articulation-XL (en cours)
+
+Étape suivante : passer des quadrupèdes procéduraux à des créatures de toutes espèces (conception : `docs/superpowers/specs/2026-10-25-creatures-toutes-especes-chimeres-design.md`). `scripts/build_axl_cache.py` lit [Articulation-XL2.0](https://huggingface.co/datasets/Seed3D/Articulation-XL2.0) (CC-BY-4.0, via [son miroir Parquet](https://huggingface.co/datasets/chibifire/datasource-articulation-xl2-parquet)) groupe de lignes par groupe de lignes, sans télécharger les 25 Go de maillages. Il garde les créatures (animaux, créatures mythiques, personnages, jouets), échantillonne 8192 points avec leurs poids de peau, oriente chaque modèle (haut +Y, avant +X) et le ramène au rayon 1. `data/axl/dataset.py` déforme ensuite chaque créature par son squelette : longueur des os, épaisseur, pose, parties qui rétrécissent ou disparaissent. Il tire aussi 70 % d'animaux.
+
+| | Entraînement | Test |
+|---|---|---|
+| Créatures retenues | 40 218 (10 948 animaux) | 1 736 (494 animaux) |
+| Taille du cache | 4,8 Go | 0,2 Go |
+| Orientation, échecs nets à l'œil (200 créatures) | 6 % (12,5 % au pire) | |
+
+Rapport complet et planches : `docs/axl/report.md`. Les données dérivées ne sont pas republiées.
 
 ---
 
