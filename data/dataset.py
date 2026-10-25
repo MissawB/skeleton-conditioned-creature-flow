@@ -18,6 +18,7 @@ class CreatureDataset(Dataset):
         seed: int = 42,
         ot_noise_per_sample: int = 0,
         independent_noise_prob: float = 0.0,
+        ot_noise_beta: float = 0.0,
         ot_workers: Optional[int] = None
     ):
         super().__init__()
@@ -25,6 +26,7 @@ class CreatureDataset(Dataset):
         self.augment = augment
         self.cache_dir = cache_dir
         self.independent_noise_prob = independent_noise_prob
+        self.ot_noise_beta = ot_noise_beta
         self.samples = []
         self.ot_noise = None
         
@@ -97,6 +99,9 @@ class CreatureDataset(Dataset):
             else:
                 stack = self.ot_noise[idx]
                 noise = stack[np.random.randint(len(stack))].numpy().copy()
+                if self.ot_noise_beta > 0:
+                    # Not-So-OT perturbation: keeps the OT pairing mostly intact while staying N(0, I)
+                    noise = np.sqrt(1 - self.ot_noise_beta) * noise + np.sqrt(self.ot_noise_beta) * np.random.randn(*noise.shape).astype(np.float32)
         
         if self.augment:
             pts, jts, noise = self._apply_augmentation(pts, jts, noise)
