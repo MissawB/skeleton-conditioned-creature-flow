@@ -29,8 +29,9 @@ class RangeFile(io.RawIOBase):
     """Seekable read-only view of a remote file; follows the Hub redirect once, then reuses the final URL."""
 
     def __init__(self, url: str):
-        self.url, headers, _ = _fetch(urllib.request.Request(url, method="HEAD"))
-        self.size = int(headers["Content-Length"])
+        # A one-byte range, not HEAD: urllib turns a redirected HEAD into a GET of the whole file
+        self.url, headers, _ = _fetch(urllib.request.Request(url, headers={"Range": "bytes=0-0"}))
+        self.size = int(headers["Content-Range"].rsplit("/", 1)[1])
         self.pos = 0
 
     def readable(self) -> bool:

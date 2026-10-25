@@ -24,15 +24,15 @@ def test_range_reads_retry_after_network_errors(monkeypatch):
     calls = []
 
     class Response(io.BytesIO):
-        headers = {"Content-Length": "10"}
+        headers = {"Content-Length": "10", "Content-Range": "bytes 0-0/10"}
 
         def geturl(self):
             return "https://cdn.example/file"
 
     def fake_urlopen(request, timeout=None):
         calls.append(timeout)
-        if request.get_method() == "HEAD":
-            return Response(b"")
+        if request.headers.get("Range") == "bytes=0-0":
+            return Response(b"0")
         if len(calls) < 4:
             raise urllib.error.URLError("network unreachable")
         return Response(b"0123456789"[2:6])
@@ -43,3 +43,27 @@ def test_range_reads_retry_after_network_errors(monkeypatch):
     f.seek(2)
     assert f.read(4) == b"2345"
     assert all(t is not None for t in calls)  # every request has a timeout, so a dead socket cannot hang the build
+
+
+def test_file_size_comes_from_a_one_byte_range_request(monkeypatch):
+    import io
+    from data.axl import remote_parquet
+
+    requests = []
+
+    class Response(io.BytesIO):
+        def __init__(self, body, headers):
+            super().__init__(body)
+            self.headers = headers
+
+        def geturl(self):
+            return "https://cdn.example/file"
+
+    def fake_urlopen(request, timeout=None):
+        requests.append(request)
+        assert request.headers.get("Range"), "every request must be a range request (a redirected HEAD becomes a full GET)"
+        return Response(b"x", {"Content-Range": "bytes 0-0/25000000000", "Content-Length": "1"})
+
+    monkeypatch.setattr(remote_parquet.urllib.request, "urlopen", fake_urlopen)
+    f = remote_parquet.RangeFile("https://huggingface.co/x")
+    assert f.size == 25_000_000_000 and f.url == "https://cdn.example/file"
