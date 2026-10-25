@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import scipy.sparse as sp
 from data.axl.sampling import sample_surface, vertex_skin, point_skin
 
 
@@ -28,8 +29,9 @@ def test_skin_weights_are_renormalised_and_unweighted_vertices_get_nearest_bone(
     parents = np.array([-1, 0, 1])
     vertices = np.array([[0.2, 0.1, 0], [1.8, 0.1, 0], [1.5, 0, 0]], float)
     row, col, value = np.array([0, 0, 2]), np.array([0, 1, 2]), np.array([0.3, 0.3, 0.5])
-    skin = vertex_skin(row, col, value, 3, 3, vertices, joints, parents)
-    assert skin.dtype == np.float32 and skin.shape == (3, 3)
+    sparse = vertex_skin(row, col, value, 3, 3, vertices, joints, parents)
+    assert sp.issparse(sparse) and sparse.dtype == np.float32 and sparse.shape == (3, 3)
+    skin = sparse.toarray()
     assert np.allclose(skin[0], [0.5, 0.5, 0])
     assert np.allclose(skin[2], [0, 0, 1])
     assert np.allclose(skin[1], [0, 1, 0])  # nearest bone 1->2 belongs to its head joint 1
@@ -41,3 +43,9 @@ def test_point_skin_interpolates_and_keeps_top_k():
     idx, w = point_skin(skin, faces, np.array([0]), np.array([[0.5, 0.3, 0.2]], np.float32), top_k=2)
     assert idx.dtype == np.uint8 and idx[0].tolist() == [0, 1]
     assert np.allclose(w[0], [0.625, 0.375])
+
+
+def test_point_skin_accepts_a_sparse_skin_matrix():
+    skin = sp.csr_matrix(np.eye(3, dtype=np.float32))
+    idx, w = point_skin(skin, np.array([[0, 1, 2]]), np.array([0]), np.array([[0.5, 0.3, 0.2]], np.float32), top_k=2)
+    assert idx[0].tolist() == [0, 1] and np.allclose(w[0], [0.625, 0.375])

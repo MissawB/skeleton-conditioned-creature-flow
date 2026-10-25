@@ -79,3 +79,12 @@ def test_build_skips_existing_shards_and_writes_atomically(tmp_path):
     with np.load(out / "train" / "rg0001.npz") as shard1:
         assert list(shard1["uuids"]) == ["c"]
     assert not (out / "train" / "rg0001.tmp.npz").exists()
+
+
+def test_row_groups_are_read_as_numpy_geometry(tmp_path):
+    from data.axl.build import _read_row_group
+    write_mirror(tmp_path, "train", [_quadruped("a")], {"a": ["animal"]})
+    row = _read_row_group("train", 0, lambda p: pq.ParquetFile(tmp_path / p))[0]
+    assert isinstance(row["vertices"], np.ndarray) and row["vertices"].shape[1] == 3
+    assert isinstance(row["faces"], np.ndarray) and row["faces"].shape[1] == 3
+    assert isinstance(row["value"], np.ndarray) and isinstance(row["joints"], np.ndarray)

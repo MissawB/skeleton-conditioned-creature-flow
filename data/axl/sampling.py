@@ -1,5 +1,6 @@
 """Area-weighted surface sampling of a skinned mesh, with skin weights carried to each sampled point."""
 import numpy as np
+import scipy.sparse as sp
 
 def sample_surface(vertices: np.ndarray, faces: np.ndarray, num_points: int, rng: np.random.Generator):
     """Returns (points (N,3) float32, face_idx (N,) int64, bary (N,3) float32), faces drawn in proportion to their area."""
@@ -29,35 +30,42 @@ def _segment_distances(points: np.ndarray, starts: np.ndarray, ends: np.ndarray)
     closest = starts[None] + np.clip(t, 0, 1)[..., None] * ab[None]
     return np.linalg.norm(points[:, None] - closest, axis=2)
 
-def vertex_skin(row, col, value, n_rows: int, n_cols: int, vertices: np.ndarray, joints: np.ndarray, parents: np.ndarray) -> np.ndarray:
+def vertex_skin(row, col, value, n_rows: int, n_cols: int, vertices: np.ndarray, joints: np.ndarray, parents: np.ndarray) -> sp.csr_matrix:
     """
-    Dense (V, J) skin matrix from the mirror's COO triplets (row = vertex, col = joint), renormalised to sum to 1.
+    Sparse (V, J) skin matrix from the mirror's COO triplets (row = vertex, col = joint), renormalised to sum to 1.
+    Sparse because a dense matrix of a multi-million-vertex mesh would take hundreds of MB.
     A joint's weights cover the segment from that joint to its children, so a vertex with no weight goes to the
     head joint of the nearest bone.
     """
-    skin = np.zeros((n_rows, n_cols), dtype=np.float32)
-    np.add.at(skin, (np.asarray(row), np.asarray(col)), np.asarray(value, dtype=np.float32))
-    sums = skin.sum(1)
+    skin = sp.csr_matrix((np.asarray(value, dtype=np.float32), (np.asarray(row), np.asarray(col))), shape=(n_rows, n_cols))
+    sums = np.asarray(skin.sum(1)).ravel()
     weighted = sums > 0
-    skin[weighted] /= sums[weighted, None]
+    skin = sp.diags(np.where(weighted, 1.0 / np.where(weighted, sums, 1.0), 0.0).astype(np.float32)) @ skin
 
     orphans = np.where(~weighted)[0]
     if len(orphans):
         children = np.where(parents >= 0)[0]
         if len(children) == 0:
-            skin[orphans, 0] = 1.0
+            owners = np.zeros(len(orphans), dtype=np.int64)
         else:
             heads = parents[children]
             orphan_vertices = np.asarray(vertices, dtype=np.float64)[orphans]
+            owners = np.empty(len(orphans), dtype=np.int64)
             # Chunked so a mesh with many unweighted vertices stays within memory
             for start in range(0, len(orphans), 4096):
                 dist = _segment_distances(orphan_vertices[start:start + 4096], joints[heads], joints[children])
-                skin[orphans[start:start + 4096], heads[dist.argmin(1)]] = 1.0
-    return skin
+                owners[start:start + 4096] = heads[dist.argmin(1)]
+        skin = skin + sp.csr_matrix((np.ones(len(orphans), np.float32), (orphans, owners)), shape=(n_rows, n_cols))
+    return skin.tocsr().astype(np.float32)
 
-def point_skin(skin: np.ndarray, faces: np.ndarray, face_idx: np.ndarray, bary: np.ndarray, top_k: int = 4):
-    """Barycentric skin weights of sampled points, cut to the top_k joints and renormalised: (idx uint8 (N,k), w float32 (N,k))."""
-    weights = np.einsum("nk,nkj->nj", bary, skin[faces[face_idx]])
+def point_skin(skin, faces: np.ndarray, face_idx: np.ndarray, bary: np.ndarray, top_k: int = 4):
+    """Barycentric skin weights of sampled points, cut to the top_k joints and renormalised: (idx uint8 (N,k), w float32 (N,k)).
+    skin may be dense or sparse; only the rows of the sampled faces' corners are densified."""
+    corners = faces[face_idx]
+    weights = np.zeros((len(face_idx), skin.shape[1]), dtype=np.float32)
+    for c in range(3):
+        rows = skin[corners[:, c]]
+        weights += bary[:, c, None] * (rows.toarray() if sp.issparse(rows) else rows)
     k = min(top_k, weights.shape[1])
     idx = np.argsort(-weights, axis=1)[:, :k]
     w = np.take_along_axis(weights, idx, axis=1)

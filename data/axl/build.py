@@ -58,20 +58,38 @@ def process_model(row: dict, num_points: int, rng: np.random.Generator) -> dict:
         "scale": scale,
     }
 
+NUMPY_COLUMNS = {"joints": (np.float64, 3), "bones": (np.int64, 2), "vertices": (np.float64, 3), "faces": (np.int64, 3),
+                 "row": (np.int64, 1), "col": (np.int64, 1), "value": (np.float32, 1)}
+
+def _split_list_column(column, dtype, width: int) -> list:
+    """Arrow list column -> one numpy array per row, without building Python lists (meshes can have millions of vertices)."""
+    column = column.combine_chunks()
+    offsets = column.offsets.to_numpy()
+    values = column.values
+    if width > 1:
+        values = values.flatten()
+    flat = values.to_numpy(zero_copy_only=False).astype(dtype, copy=False)
+    if width > 1:
+        flat = flat.reshape(-1, width)
+    return [flat[offsets[i]:offsets[i + 1]] for i in range(len(offsets) - 1)]
+
 def _read_row_group(split: str, index: int, open_fn: Callable) -> list:
-    tables = {name: open_fn(f"{split}/{name}.parquet").read_row_group(index, columns=cols).to_pylist()
+    tables = {name: open_fn(f"{split}/{name}.parquet").read_row_group(index, columns=cols)
               for name, cols in TABLE_COLUMNS.items()}
-    uuids = [r["uuid"] for r in tables["models"]]
-    for name, rows in tables.items():
-        if [r["uuid"] for r in rows] != uuids:
+    uuids = tables["models"].column("uuid").to_pylist()
+    for name, table in tables.items():
+        if table.column("uuid").to_pylist() != uuids:
             raise RuntimeError(f"row group {index}: {name} is not aligned with models")
-    joined = []
-    for parts in zip(*tables.values()):
-        row = {}
-        for part in parts:
-            row.update(part)
-        joined.append(row)
-    return joined
+    rows = [{} for _ in uuids]
+    for table in tables.values():
+        for name in table.column_names:
+            if name in NUMPY_COLUMNS:
+                values = _split_list_column(table.column(name), *NUMPY_COLUMNS[name])
+            else:
+                values = table.column(name).to_pylist()
+            for row, value in zip(rows, values):
+                row[name] = value
+    return rows
 
 def _write_shard(path: Path, models: list, groups: list) -> None:
     tmp = path.with_name(path.stem + ".tmp.npz")
