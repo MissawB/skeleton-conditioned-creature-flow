@@ -29,12 +29,12 @@ training:
   batch_size: 16
   learning_rate: 0.0002
   weight_decay: 0.00001
-  num_epochs: 90
+  num_epochs: 180               # OT shapes keep sharpening up to at least 180 epochs (constant LR does as well as cosine)
   lr_schedule: "constant"       # "cosine": decay from learning_rate to min_lr_ratio * learning_rate over the run
   warmup_steps: 0               # linear warmup at the start (optimizer steps)
   min_lr_ratio: 0.0
   mixed_precision: "bf16"       # "no" for full fp32; bf16 autocast is about 3x faster with the same quality
-  save_every: 5
+  save_every: 15
   device: "cuda"
   checkpoint_dir: "checkpoints"
   late_t_prob: 0.0              # share of samples with t ~ U[late_t_min, 1] instead of U[0, 1]

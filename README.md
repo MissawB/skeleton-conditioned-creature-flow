@@ -62,7 +62,7 @@ $$\text{score}_{h}(i, k) = \frac{q_i \cdot k_k}{\sqrt{d}} - \lambda_h \, \| \hat
 
 ## 📊 Résultats
 
-Modèle de 10,4 M de paramètres entraîné 90 époques sur 500 créatures (100 par famille), soit environ 16 min sur une RTX 4060 Laptop en précision mixte bf16 (`mixed_precision`, 3,6 Go ; 48 min et 5,3 Go en fp32, pour la même qualité). Les ablations ci-dessous, jusqu'à la section sur la durée d'entraînement, ont été faites à 30 époques en fp32. La génération utilise une moyenne mobile exponentielle des poids (EMA, décroissance 0.995, soit un horizon d'environ 6 époques) plutôt que leur dernier état.
+Modèle de 10,4 M de paramètres entraîné 180 époques sur 500 créatures (100 par famille), soit environ 32 min sur une RTX 4060 Laptop en précision mixte bf16 (`mixed_precision`, 3,6 Go ; environ 1 h 35 et 5,3 Go en fp32, pour la même qualité). Les ablations ci-dessous, jusqu'à la section sur la durée d'entraînement, ont été faites à 30 époques en fp32. La génération utilise une moyenne mobile exponentielle des poids (EMA, décroissance 0.995, soit un horizon d'environ 6 époques) plutôt que leur dernier état.
 
 **Protocole** (`scripts/evaluate_families.py`) : 40 squelettes jamais vus (8 par famille, seed disjointe de l'entraînement). Chaque créature générée est attribuée à la famille dont les 8 formes réelles de référence sont en moyenne les plus proches en Chamfer Distance.
 
@@ -183,7 +183,22 @@ Les trajectoires deviennent presque droites, ce qui rend l'échantillonnage bien
 | Heun 10 | 20 | 0.0042 | 0.00094 | 57 % |
 | Heun 20 | 40 | 0.0040 | 0.00092 | 57 % |
 
-Euler 5 fait aussi bien que Heun 20 avec huit fois moins d'évaluations ; en Euler, le 1-NNA côté générées remonte un peu (7 à 11 %, contre 0 à 3 % en Heun). Le modèle publié et la visionneuse utilisent le générateur v4, `data_scale: 4`, le couplage OT pur, 90 époques en bf16 (run 0) et Euler 10.
+Euler 5 fait aussi bien que Heun 20 avec huit fois moins d'évaluations ; en Euler, le 1-NNA côté générées remonte un peu (7 à 11 %, contre 0 à 3 % en Heun). ### Durée d'entraînement avec le couplage OT
+
+Avec la cible devenue presque déterministe, la loss continue de baisser bien après 90 époques (0.0129 à 90, 0.0103 à 360), et la surface s'affine avec elle (200 contre 200, Euler 10) :
+
+| | 90 époques | **180 époques** (2 runs) | 180 époques, cosinus | 360 époques |
+|---|---|---|---|---|
+| Écart médian à la surface | 0.0038 | **0.0029 / 0.0030** | 0.0030 | 0.0026 |
+| p90 | 0.0116 | **0.0088 / 0.0091** | 0.0093 | 0.0076 |
+| MMD-CD | 0.00092 | **0.00084 / 0.00085** | 0.00086 | 0.00082 |
+| COV-CD | 58 % | 57 % / 56 % | 54 % | 56 % |
+| 1-NNA côté générées | 7 % | 2 % / 2 % | 6 % | 1 % |
+| Famille reconnue (CD) | 100 % (0.0010) | **100 % (0.0009) / 100 % (0.0009)** | | |
+
+Le gain vient de la durée, pas du calendrier : un taux constant fait aussi bien qu'une décroissance en cosinus. Le run de 360 époques passe par 0.0031 à 180 époques et 0.0028 à 270 : le gain continue mais ralentit, et 180 époques est le défaut (environ 32 min). Réduire les tirages de bruit OT de 8 à 2 par forme ne change rien à 90 époques (écart médian 0.0041 contre 0.0040, MMD 0.00094 contre 0.00092) : la diversité du bruit apparié ne limite pas le modèle.
+
+Le modèle publié et la visionneuse utilisent le générateur v4, `data_scale: 4`, le couplage OT pur, 180 époques en bf16 à taux constant (run 0) et Euler 10.
 
 ---
 
@@ -191,11 +206,11 @@ Euler 5 fait aussi bien que Heun 20 avec huit fois moins d'évaluations ; en Eul
 
 - **Données procédurales, pas SMAL** : les formes sont des cylindres échantillonnés autour d'un squelette paramétrique inspiré de la topologie SMAL, pas le modèle SMAL lui-même (`shape_betas` est inutilisé). La variabilité intra-famille est faible (±3 % sur les proportions).
 - **100 % de reconnaissance, sur un test facile** : avec le générateur v4, les 5 familles sont séparées par construction (proportions, écartement, port de tête) et leur variabilité interne est faible ; ce score mesure que le modèle suit le squelette, pas qu'il généralise à de vrais animaux.
-- **Précision** : les formes générées restent environ 1,5 fois plus éloignées de leur famille que deux créatures réelles entre elles (0.0010 contre 0.0007), et leur surface reste plus diffuse que celle des vraies formes (écart médian 0.0038 contre 0.0004). Un classifieur au plus proche voisin reconnaît encore toutes les vraies formes (1-NNA côté réelles : 100 %).
+- **Précision** : les formes générées restent environ 1,3 fois plus éloignées de leur famille que deux créatures réelles entre elles (0.0009 contre 0.0007), et leur surface reste plus diffuse que celle des vraies formes (écart médian 0.0029 contre 0.0004). Un classifieur au plus proche voisin reconnaît encore toutes les vraies formes (1-NNA côté réelles : 100 %).
 - **L'autoguidage n'aide pas ici** (`--guide-checkpoint`, avec un petit modèle de 8 époques comme guide) : à $w = 1.5$, il porte une seed à 100 % de reconnaissance (modèles du générateur v3), mais divise presque la couverture par deux (COV 62 % → 32 %) ; au-delà, les formes se dégradent. Restreindre le guidage à un intervalle de $t$ (`--guidance-interval`) ne fait que l'atténuer.
 - **Greffe** : la jonction aligne le sous-arbre donneur par translation, sans mise à l'échelle ni rotation.
 - **Une seule seed par variante intermédiaire** dans l'ablation. Le modèle final varie de 90 à 95 % selon la seed (3 runs), et l'évaluation sur 40 squelettes a elle-même une incertitude d'environ ±8 points.
-- **Coût du couplage OT** : l'appariement exact coûte environ 2 s par tirage et par forme ; il est précalculé une fois pour 8 tirages par forme (environ 30 min sur 12 cœurs pour 500 formes). Doubler le jeu de données doublerait ce coût, et 8 tirages par forme limitent la diversité du bruit vu à l'entraînement.
+- **Coût du couplage OT** : l'appariement exact coûte environ 2 s par tirage et par forme ; il est précalculé une fois pour 8 tirages par forme (environ 30 min sur 12 cœurs pour 500 formes). Doubler le jeu de données doublerait ce coût ; 2 tirages par forme donnent toutefois le même résultat que 8.
 
 ---
 
