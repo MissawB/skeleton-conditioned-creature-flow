@@ -27,6 +27,9 @@ def main():
         independent_noise_prob=cfg["data"].get("independent_noise_prob", 0.0),
         ot_noise_beta=cfg["data"].get("ot_noise_beta", 0.0)
     )
+    online_ot = cfg["data"].get("online_ot", False)
+    if online_ot and cfg["data"].get("ot_noise_per_sample", 0) > 0:
+        raise ValueError("data.online_ot matches noise on the GPU: set data.ot_noise_per_sample to 0")
     
     model = PointDiT(
         point_dim=cfg["model"]["point_dim"],
@@ -43,7 +46,8 @@ def main():
     )
     fm = OptimalTransportFlowMatching(model, cond_drop_prob=cfg["training"].get("cond_drop_prob", 0.0),
                                       late_t_prob=cfg["training"].get("late_t_prob", 0.0),
-                                      late_t_min=cfg["training"].get("late_t_min", 0.9))
+                                      late_t_min=cfg["training"].get("late_t_min", 0.9),
+                                      online_ot=online_ot)
     
     trainer = Trainer(
         flow_matching=fm,

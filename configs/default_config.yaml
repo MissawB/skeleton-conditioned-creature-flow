@@ -12,6 +12,7 @@ data:
   ot_noise_per_sample: 8        # OT-matched noise draws precomputed per shape (0 = independent coupling; first run ~30 min CPU, then cached)
   independent_noise_prob: 0.0   # share of independent noise during training (any share brings the target noise back)
   ot_noise_beta: 0.0            # Not-So-OT perturbation of the matched noise: sqrt(1-b)*x0 + sqrt(b)*eps
+  online_ot: false              # match noise to points on the GPU during training (Sinkhorn), instead of precomputed draws
 
 model:
   point_dim: 3
