@@ -87,3 +87,18 @@ def test_output_shape_and_old_point_dit_unchanged():
     t_emb = old.time_embedder(t)
     mem = old.skeleton_encoder(joints)
     assert torch.equal(block(h, t_emb, mem, x, joints), block(h, t_emb, mem, x, joints, key_bias=None))
+
+
+def test_large_skeletons_use_checkpointing_with_identical_gradients():
+    torch.manual_seed(0)
+    m = CreatureDiT(hidden_dim=32, num_layers=2, num_heads=4, z_dim=8, data_scale=4.0, checkpoint_above_joints=3).train()
+    x, t = _x()
+    c = _creature()
+    m(x, t, *c).pow(2).sum().backward()
+    with_ckpt = [p.grad.clone() for p in m.parameters() if p.grad is not None]
+    m.zero_grad()
+    m.checkpoint_above_joints = 10 ** 6
+    m(x, t, *c).pow(2).sum().backward()
+    without = [p.grad.clone() for p in m.parameters() if p.grad is not None]
+    assert all(torch.allclose(a, b, atol=1e-6) for a, b in zip(with_ckpt, without))
+    assert m.uses_checkpointing(5) is False and CreatureDiT(hidden_dim=32, num_layers=1, num_heads=4, checkpoint_above_joints=3).train().uses_checkpointing(5)

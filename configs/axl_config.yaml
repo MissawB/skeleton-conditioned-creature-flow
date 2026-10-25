@@ -13,10 +13,10 @@ model:
   data_scale: 3.5            # measured: augmented creatures have std 0.288, so std * 3.5 ~ 1 like the noise
 
 training:
-  batch_size: 32
+  batch_size: 16             # B=32 peaks at 8.3 GB with 70+ joints (spills to system RAM, 2.3 s/step); B=16: 4.6 GB at 99 joints
   learning_rate: 0.0002
   weight_decay: 0.00001
-  num_epochs: 10
+  num_epochs: 10             # ~30 samples/s on an RTX 4060 laptop: about 3.7 h for 10 passes over 40K creatures
   mixed_precision: "bf16"
   ema_decay: 0.995
   kl_weight: 0.001

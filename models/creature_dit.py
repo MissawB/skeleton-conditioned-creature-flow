@@ -6,6 +6,7 @@ joins the time embedding in the AdaLN conditioning.
 from typing import Optional
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 from models.point_dit import PointDiTBlock, TimestepEmbedder
 from models.skeleton_graph import SkeletonGraphEncoder
 
@@ -13,12 +14,15 @@ MIN_PRESENCE = 1e-4
 
 class CreatureDiT(nn.Module):
     def __init__(self, hidden_dim: int = 256, num_layers: int = 6, num_heads: int = 8, z_dim: int = 64,
-                 spatial_distance_scale: Optional[float] = None, data_scale: float = 1.0, skeleton_layers: int = 2):
+                 spatial_distance_scale: Optional[float] = None, data_scale: float = 1.0, skeleton_layers: int = 2,
+                 checkpoint_above_joints: int = 128):
         super().__init__()
         # Points and joints arrive multiplied by data_scale (done by the flow); the default bias keeps the
         # quadruped model's per-head reach in data units
         self.register_buffer("data_scale", torch.tensor(float(data_scale)))
         self.z_dim = z_dim
+        # Point-to-joint attention grows with the joint count: recompute blocks in backward for very large rigs
+        self.checkpoint_above_joints = checkpoint_above_joints
         if spatial_distance_scale is None:
             spatial_distance_scale = 2.0 / data_scale ** 2
         self.point_proj = nn.Linear(3, hidden_dim)
@@ -37,6 +41,9 @@ class CreatureDiT(nn.Module):
         self.out_proj = nn.Linear(hidden_dim, 3)
         nn.init.zeros_(self.out_proj.weight)
         nn.init.zeros_(self.out_proj.bias)
+
+    def uses_checkpointing(self, num_joints: int) -> bool:
+        return self.training and num_joints > self.checkpoint_above_joints
 
     def forward(self, x_t: torch.Tensor, t: torch.Tensor, joints: torch.Tensor, parents: torch.Tensor,
                 presence: torch.Tensor, joint_mask: torch.Tensor, z: Optional[torch.Tensor] = None,
@@ -62,7 +69,11 @@ class CreatureDiT(nn.Module):
         h = self.point_proj(x_t)
         pos = x_t
         remaining = (1.0 - t).view(-1, 1, 1)
+        recompute = self.uses_checkpointing(joints.shape[1])
         for block, pos_head in zip(self.blocks, self.pos_heads):
-            h = block(h, cond, joint_mem, pts_pos=pos, joint_pos=joints, bias_weight=bias_weight, key_bias=key_bias)
+            if recompute:
+                h = checkpoint(block, h, cond, joint_mem, pos, joints, bias_weight, key_bias, use_reentrant=False)
+            else:
+                h = block(h, cond, joint_mem, pts_pos=pos, joint_pos=joints, bias_weight=bias_weight, key_bias=key_bias)
             pos = x_t + remaining * pos_head(h)
         return self.out_proj(self.final_norm(h))
