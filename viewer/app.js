@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 let scene, camera, renderer, controls;
-let pointCloud, skeletonGroup, floorGroup;
+let pointCloud, pathLines, skeletonGroup, floorGroup;
 let creaturesData = [];
 let currentCreature = null;
 let currentIdx = -1;
@@ -18,6 +18,9 @@ const BACKGROUND = 0x141c1a;
 const PLAY_SPEED = 0.25; // flow time per second
 const MORPH_MS = 700;
 const POINT_SIZE = 0.028;
+const PATH_EVERY = 2;   // draw a trail for one point in PATH_EVERY
+const PATH_SUBDIV = 4;  // trail segments per solver step
+const PATH_TAIL = 0.35; // trail length in flow time
 const DEFAULT_CAM_OFFSET = new THREE.Vector3(1.9, 0.9, 2.3);
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -42,6 +45,10 @@ function init() {
   controls.dampingFactor = 0.06;
   controls.minDistance = 0.8;
   controls.maxDistance = 8;
+  // Slow turntable until the visitor takes the camera
+  controls.autoRotate = !reducedMotion;
+  controls.autoRotateSpeed = 0.6;
+  controls.addEventListener("start", () => { controls.autoRotate = false; });
 
   floorGroup = new THREE.Group();
   scene.add(floorGroup);
@@ -67,14 +74,18 @@ const POINT_VERTEX = /* glsl */ `
   uniform float uFloorY;
   uniform vec3 uNoiseColor;
   uniform vec3 uBoneColor;
+  uniform vec3 uGlowColor;
+  attribute float aSpeed; // speed relative to the specimen's mean speed
   varying vec3 vColor;
   #include <fog_pars_vertex>
   void main() {
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * mvPosition;
-    gl_PointSize = uSize * uScale / -mvPosition.z;
+    // Fast particles warm towards ochre and swell; all settle as the specimen forms
+    float glow = smoothstep(0.7, 2.0, aSpeed) * (1.0 - smoothstep(0.8, 1.0, uT));
+    gl_PointSize = uSize * uScale / -mvPosition.z * (1.0 + 0.5 * glow);
     float shade = 0.72 + 0.28 * clamp((position.y - uFloorY) / 1.1, 0.0, 1.0);
-    vColor = mix(uNoiseColor, uBoneColor, uT) * shade;
+    vColor = mix(mix(uNoiseColor, uBoneColor, uT), uGlowColor, 0.75 * glow) * shade;
     #include <fog_vertex>
   }
 `;
@@ -93,6 +104,57 @@ const POINT_FRAGMENT = /* glsl */ `
     #include <fog_fragment>
   }
 `;
+
+// Trails behind each particle: every vertex knows the flow time it was reached
+// at, so drawing the trail up to t is a uniform change, not a geometry rebuild.
+const PATH_VERTEX = /* glsl */ `
+  attribute float aT;
+  varying float vT;
+  #include <fog_pars_vertex>
+  void main() {
+    vT = aT;
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * mvPosition;
+    #include <fog_vertex>
+  }
+`;
+
+const PATH_FRAGMENT = /* glsl */ `
+  uniform float uT;
+  uniform float uTail;
+  uniform vec3 uOldColor;
+  uniform vec3 uNewColor;
+  varying float vT;
+  #include <fog_pars_fragment>
+  void main() {
+    float age = uT - vT;
+    if (age < 0.0 || age > uTail) discard;
+    float fresh = 1.0 - age / uTail;
+    // Trails clear away at the end so the finished specimen stands alone
+    float alpha = 0.4 * fresh * fresh * (1.0 - smoothstep(0.85, 1.0, uT));
+    gl_FragColor = vec4(mix(uOldColor, uNewColor, fresh), alpha);
+    #include <colorspace_fragment>
+    #include <fog_fragment>
+  }
+`;
+
+// Catmull-Rom weights and their derivative at a in [0, 1]
+function crWeights(a) {
+  const a2 = a * a;
+  const a3 = a2 * a;
+  return [0.5 * (-a3 + 2 * a2 - a), 0.5 * (3 * a3 - 5 * a2 + 2),
+          0.5 * (-3 * a3 + 4 * a2 + a), 0.5 * (a3 - a2)];
+}
+function crDerivWeights(a) {
+  const a2 = a * a;
+  return [0.5 * (-3 * a2 + 4 * a - 1), 0.5 * (9 * a2 - 10 * a),
+          0.5 * (-9 * a2 + 8 * a + 1), 0.5 * (3 * a2 - 2 * a)];
+}
+// The four solver steps around segment i, clamped at both ends
+function crSteps(steps, i) {
+  const n = steps.length - 1;
+  return [steps[Math.max(0, i - 1)], steps[i], steps[i + 1], steps[Math.min(n, i + 2)]];
+}
 
 const smoothstep01 = (x) => x * x * (3 - 2 * x);
 
@@ -132,6 +194,7 @@ function setupUI() {
   const playBtn = $("play-btn");
   const skelBtn = $("toggle-skeleton-btn");
   const resetBtn = $("reset-cam-btn");
+  const pathsBtn = $("toggle-paths-btn");
 
   slider.addEventListener("input", (e) => {
     setPlaying(false);
@@ -148,6 +211,12 @@ function setupUI() {
     skelBtn.setAttribute("aria-pressed", String(skeletonGroup.visible));
   });
 
+  pathsBtn.addEventListener("click", () => {
+    const on = pathsBtn.getAttribute("aria-pressed") !== "true";
+    pathsBtn.setAttribute("aria-pressed", String(on));
+    if (pathLines) pathLines.visible = on;
+  });
+
   resetBtn.addEventListener("click", resetCamera);
 
   window.addEventListener("keydown", (e) => {
@@ -162,6 +231,8 @@ function setupUI() {
       setFlowTime(flowT + (e.key === "ArrowRight" ? 0.05 : -0.05));
     } else if (e.key === "s") {
       skelBtn.click();
+    } else if (e.key === "p") {
+      pathsBtn.click();
     } else if (/^[1-9]$/.test(e.key)) {
       loadCreature(parseInt(e.key, 10) - 1);
     }
@@ -213,6 +284,14 @@ function loadData() {
       // Flatten each step once so the per-frame interpolation reads typed arrays
       creaturesData.forEach((c) => {
         c._steps = c.trajectory.map((pts) => Float32Array.from(pts.flat()));
+        // Mean distance a point travels per unit of flow time, the reference for the glow
+        const first = c._steps[0];
+        const last = c._steps[c._steps.length - 1];
+        let total = 0;
+        for (let j = 0; j < first.length; j += 3) {
+          total += Math.hypot(last[j] - first[j], last[j + 1] - first[j + 1], last[j + 2] - first[j + 2]);
+        }
+        c._meanSpeed = total / (first.length / 3);
       });
       buildSpecimenList();
       loadCreature(0);
@@ -302,6 +381,7 @@ function loadCreature(idx) {
   }
 
   buildSkeleton();
+  buildPaths();
   buildPointCloud(final.length);
   setFlowTime(flowT);
 }
@@ -361,6 +441,9 @@ function buildPointCloud(numPoints) {
   const pos = new THREE.BufferAttribute(new Float32Array(numPoints * 3), 3);
   pos.setUsage(THREE.DynamicDrawUsage);
   geo.setAttribute("position", pos);
+  const speed = new THREE.BufferAttribute(new Float32Array(numPoints), 1);
+  speed.setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute("aSpeed", speed);
   const mat = new THREE.ShaderMaterial({
     vertexShader: POINT_VERTEX,
     fragmentShader: POINT_FRAGMENT,
@@ -374,6 +457,7 @@ function buildPointCloud(numPoints) {
         uFloorY: { value: 0 },
         uNoiseColor: { value: NOISE_COLOR },
         uBoneColor: { value: BONE_COLOR },
+        uGlowColor: { value: new THREE.Color(OCHRE) },
       },
     ]),
   });
@@ -381,6 +465,67 @@ function buildPointCloud(numPoints) {
   updatePointScale();
   pointCloud.frustumCulled = false;
   scene.add(pointCloud);
+}
+
+function buildPaths() {
+  const visible = $("toggle-paths-btn").getAttribute("aria-pressed") === "true";
+  if (pathLines) {
+    scene.remove(pathLines);
+    pathLines.geometry.dispose();
+    pathLines.material.dispose();
+  }
+  const steps = currentCreature._steps;
+  const numSteps = steps.length - 1;
+  const numPaths = Math.ceil(steps[0].length / 3 / PATH_EVERY);
+  const segs = numSteps * PATH_SUBDIV;
+  const positions = new Float32Array(numPaths * segs * 2 * 3);
+  const times = new Float32Array(numPaths * segs * 2);
+
+  // Sample the same curve the particles follow, as segment pairs
+  const samples = [];
+  for (let s = 0; s <= segs; s++) {
+    const i = Math.min(numSteps - 1, Math.floor(s / PATH_SUBDIV));
+    samples.push({ t: s / segs, P: crSteps(steps, i), w: crWeights(s / PATH_SUBDIV - i) });
+  }
+  let v = 0;
+  for (let p = 0; p < numPaths; p++) {
+    const base = p * PATH_EVERY * 3;
+    for (let s = 0; s < segs; s++) {
+      for (const smp of [samples[s], samples[s + 1]]) {
+        const [P0, P1, P2, P3] = smp.P;
+        const [w0, w1, w2, w3] = smp.w;
+        for (let k = 0; k < 3; k++) {
+          const j = base + k;
+          positions[v * 3 + k] = w0 * P0[j] + w1 * P1[j] + w2 * P2[j] + w3 * P3[j];
+        }
+        times[v++] = smp.t;
+      }
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute("aT", new THREE.BufferAttribute(times, 1));
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: PATH_VERTEX,
+    fragmentShader: PATH_FRAGMENT,
+    fog: true,
+    transparent: true,
+    depthWrite: false,
+    uniforms: THREE.UniformsUtils.merge([
+      THREE.UniformsLib.fog,
+      {
+        uT: { value: flowT },
+        uTail: { value: PATH_TAIL },
+        uOldColor: { value: NOISE_COLOR },
+        uNewColor: { value: new THREE.Color(OCHRE) },
+      },
+    ]),
+  });
+  pathLines = new THREE.LineSegments(geo, mat);
+  pathLines.frustumCulled = false;
+  pathLines.visible = visible;
+  scene.add(pathLines);
 }
 
 function updatePointCloud(tVal) {
@@ -392,16 +537,11 @@ function updatePointCloud(tVal) {
   const stepFloat = tVal * numSteps;
   const i1 = Math.min(numSteps - 1, Math.floor(stepFloat));
   const a = stepFloat - i1;
-  const P0 = steps[Math.max(0, i1 - 1)];
-  const P1 = steps[i1];
-  const P2 = steps[i1 + 1];
-  const P3 = steps[Math.min(numSteps, i1 + 2)];
-  const a2 = a * a;
-  const a3 = a2 * a;
-  const w0 = 0.5 * (-a3 + 2 * a2 - a);
-  const w1 = 0.5 * (3 * a3 - 5 * a2 + 2);
-  const w2 = 0.5 * (-3 * a3 + 4 * a2 + a);
-  const w3 = 0.5 * (a3 - a2);
+  const [P0, P1, P2, P3] = crSteps(steps, i1);
+  const [w0, w1, w2, w3] = crWeights(a);
+  const [d0, d1, d2, d3] = crDerivWeights(a);
+  // d/dt = d/da * numSteps; divide by the mean speed so 1 means a typical particle
+  const speedScale = numSteps / currentCreature._meanSpeed;
 
   let m = 0;
   if (morph) {
@@ -412,15 +552,24 @@ function updatePointCloud(tVal) {
 
   const pos = pointCloud.geometry.attributes.position;
   const out = pos.array;
-  for (let j = 0; j < out.length; j++) {
-    const v = w0 * P0[j] + w1 * P1[j] + w2 * P2[j] + w3 * P3[j];
-    out[j] = m > 0 ? v + (morph.from[j] - v) * m : v;
+  const speed = pointCloud.geometry.attributes.aSpeed;
+  for (let j = 0; j < out.length; j += 3) {
+    let s2 = 0;
+    for (let k = j; k < j + 3; k++) {
+      const v = w0 * P0[k] + w1 * P1[k] + w2 * P2[k] + w3 * P3[k];
+      out[k] = m > 0 ? v + (morph.from[k] - v) * m : v;
+      const d = d0 * P0[k] + d1 * P1[k] + d2 * P2[k] + d3 * P3[k];
+      s2 += d * d;
+    }
+    speed.array[j / 3] = Math.sqrt(s2) * speedScale;
   }
   pos.needsUpdate = true;
+  speed.needsUpdate = true;
 
   const u = pointCloud.material.uniforms;
   u.uT.value = tVal;
   u.uFloorY.value = floorGroup.position.y;
+  if (pathLines) pathLines.material.uniforms.uT.value = tVal;
 }
 
 // Same attenuation as PointsMaterial: world size scaled by half the drawing-buffer height
