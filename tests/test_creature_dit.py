@@ -102,3 +102,16 @@ def test_large_skeletons_use_checkpointing_with_identical_gradients():
     without = [p.grad.clone() for p in m.parameters() if p.grad is not None]
     assert all(torch.allclose(a, b, atol=1e-6) for a, b in zip(with_ckpt, without))
     assert m.uses_checkpointing(5) is False and CreatureDiT(hidden_dim=32, num_layers=1, num_heads=4, checkpoint_above_joints=3).train().uses_checkpointing(5)
+
+
+def test_conditioning_stays_bounded_when_its_sources_grow():
+    # axl_v1 and v2 collapsed when the time and skeleton embeddings grew tenfold and drove the AdaLN modulations
+    m, (x, t) = _model(), _x()
+    seen = []
+    m.blocks[0].register_forward_pre_hook(lambda mod, args: seen.append(args[1].norm().item()))
+    m(x, t, *_creature())
+    with torch.no_grad():
+        m.time_embedder.mlp[-1].weight.mul_(100.0)
+        m.time_embedder.mlp[-1].bias.mul_(100.0)
+    m(x, t, *_creature())
+    assert seen[1] < 2.0 * seen[0]

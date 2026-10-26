@@ -32,6 +32,9 @@ class CreatureDiT(nn.Module):
         self.z_proj = nn.Linear(z_dim, hidden_dim)
         nn.init.zeros_(self.z_proj.weight)
         nn.init.zeros_(self.z_proj.bias)
+        # Without it the time and skeleton embeddings grew tenfold around epoch 5 on Articulation-XL and the
+        # AdaLN modulations (0.3 -> 78) wrecked the residual stream: both 10-epoch runs collapsed in epoch 6
+        self.cond_norm = nn.LayerNorm(hidden_dim)
         self.blocks = nn.ModuleList([PointDiTBlock(hidden_dim, num_heads, spatial_distance_scale) for _ in range(num_layers)])
         self.pos_heads = nn.ModuleList([nn.Linear(hidden_dim, 3) for _ in range(num_layers)])
         for head in self.pos_heads:
@@ -63,7 +66,7 @@ class CreatureDiT(nn.Module):
             key_bias = torch.where(cond_mask[:, None], key_bias, torch.where(active, torch.zeros_like(key_bias), key_bias))
         if z is None:
             z = joints.new_zeros(joints.shape[0], self.z_dim)
-        cond = self.time_embedder(t) + skeleton_global + self.z_proj(z)
+        cond = self.cond_norm(self.time_embedder(t) + skeleton_global + self.z_proj(z))
         key_bias = key_bias[:, None, None, :]
 
         h = self.point_proj(x_t)
