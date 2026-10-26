@@ -220,6 +220,23 @@ Le modèle publié et la visionneuse utilisent le générateur v4, `data_scale: 
 
 Rapport complet et planches : [`axl/report.md`](axl/report.md). Les données dérivées ne sont pas republiées.
 
+### Premier modèle à squelette libre (axl_v3)
+
+10,8 M de paramètres, 10 époques sur 40 209 créatures en bf16, environ 4 h 15 sur une RTX 4060 Laptop. Évaluation sur 200 créatures de test (squelettes jamais vus), Euler 10 :
+
+| | Squelette seul | Squelette + z |
+|---|---|---|
+| MMD-CD | 0.0125 | 0.0123 |
+| COV-CD | 72 % | 73 % |
+| 1-NNA (50 % idéal) | 26,5 % | 26,2 % |
+| Écart médian au nuage réel | 0.051 | 0.051 |
+
+Sensibilité au squelette (z fixé) : 0.68. Planche : [`axl/plate_axl_v3.png`](axl/plate_axl_v3.png).
+
+Les silhouettes suivent le squelette (posture, proportions, humanoïdes nets), mais la surface est floue, les parties fines (pattes, queues, oreilles) se perdent dans le volume, et les têtes ne sont pas lisibles. Le code de forme z ne sert presque pas : avec le z d'une créature réelle, la génération n'est pas plus proche d'elle (0.0510 contre 0.0512), c'est un effondrement du postérieur (|μ| ≈ 0.07).
+
+Deux premiers essais se sont effondrés à l'époque 6 (fm de 0.075 à 0.58). La cause : le vecteur de conditionnement de l'AdaLN, non normalisé, s'est emballé (norme du plongement de t de 22 à 197, jeton global du squelette de 1,9 à 52, modulations jusqu'à 78). Un LayerNorm sur ce vecteur l'a supprimé. En chemin : 9 rigs dont une articulation est à plus de 1,5 du centre (jusqu'à 78, alors que le maillage tient dans la sphère unité) sont écartés, car l'augmentation projetait leurs points aussi loin et multipliait la perte du lot par 100 ; les pas non finis sont sautés ; le taux d'apprentissage suit un cosinus avec échauffement.
+
 ---
 
 ## ⚠️ Limites
