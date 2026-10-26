@@ -2,7 +2,7 @@
 
 **Date** : 2026-10-25
 **Auteur** : MissawB
-**Statut** : à valider par l'utilisateur
+**Statut** : validée ; étape 1 terminée, étape 2 en cours
 
 ---
 
@@ -69,7 +69,7 @@ Les squelettes vont de 2 à 100 os. Sur les animaux, il y a 25 articulations en 
 
 Des packs CC0 (Quaternius) peuvent servir d'appoint, mais ne sont pas nécessaires.
 
-**Corrections issues de l'état de l'art** (voir `reports/État des recherches chimères 3D.md`) :
+**Corrections issues de l'état de l'art** (voir [etat-de-l-art.md](etat-de-l-art.md)) :
 - On n'utilise **que l'ensemble principal** d'Articulation-XL2.0. Le sous-ensemble *diverse-pose* contient environ 4 100 animaux SMALR, et la licence SMAL interdit leur redistribution. Notre propre augmentation de pose le remplace.
 - Rig-XL (UniRig) fournit un `mapping.json` qui donne un type de corps par modèle (quadrupède, oiseau, insecte, créature aquatique…), indexé par le même `fileIdentifier` Objaverse. Il sert à affiner les étiquettes pour l'équilibre 70/30 et pour le catalogue, là où il couvre nos modèles.
 - Les licences de chaque objet sont récupérées par jointure avec la colonne `license` d'Objaverse-XL. Une éventuelle republication de données dérivées se limite aux objets sous CC-BY ou CC0.
