@@ -38,7 +38,8 @@ def main():
     trainer = Trainer(fm, dataset, batch_size=t["batch_size"], lr=t["learning_rate"], weight_decay=t["weight_decay"],
                       checkpoint_dir=t["checkpoint_dir"], device=t["device"], ema_decay=t["ema_decay"],
                       num_epochs=t["num_epochs"], mixed_precision=t["mixed_precision"],
-                      sampler=sampler, collate_fn=collate_skeletons, num_workers=d["num_workers"])
+                      lr_schedule=t.get("lr_schedule", "constant"), warmup_steps=t.get("warmup_steps", 0),
+                      min_lr_ratio=t.get("min_lr_ratio", 0.0), sampler=sampler, collate_fn=collate_skeletons, num_workers=d["num_workers"])
     fm.model.to(trainer.device)
 
     start = 1
@@ -49,12 +50,14 @@ def main():
             print(f"Resumed from {checkpoints[-1]}")
 
     params = sum(p.numel() for p in fm.model.parameters()) / 1e6
-    print(f"{len(dataset)} creatures, {params:.1f} M parameters, {len(trainer.dataloader)} steps per epoch", flush=True)
+    print(f"{len(dataset)} creatures ({dataset.excluded} broken rigs left out), {params:.1f} M parameters, "
+          f"{len(trainer.dataloader)} steps per epoch", flush=True)
     for epoch in range(start, t["num_epochs"] + 1):
         began = time.time()
         loss = trainer.train_epoch(epoch)
         elapsed = time.time() - began
         print(f"Epoch {epoch:03d}/{t['num_epochs']:03d} | Loss: {loss:.5f} | fm {fm.last_stats['fm']:.4f} kl {fm.last_stats['kl']:.2f} "
+              f"| lr {trainer.optimizer.param_groups[0]['lr']:.1e}, {trainer.skipped_steps} non-finite steps skipped "
               f"| {len(trainer.dataloader) * t['batch_size'] / elapsed:.0f} samples/s, {elapsed / 60:.1f} min", flush=True)
         if epoch % t["save_every"] == 0 or epoch == t["num_epochs"]:
             print(f"--> Saved checkpoint to {trainer.save_checkpoint(epoch)}", flush=True)

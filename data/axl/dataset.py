@@ -59,7 +59,8 @@ class AXLDataset(Dataset):
     """Creatures from the shard cache built by scripts/build_axl_cache.py."""
 
     def __init__(self, cache_dir: str, split: str, num_points: int = 2048, augment: bool = True,
-                 augment_cfg: Optional[AugmentConfig] = None, seed: int = 0, max_shards: Optional[int] = None):
+                 augment_cfg: Optional[AugmentConfig] = None, seed: int = 0, max_shards: Optional[int] = None,
+                 max_joint_reach: Optional[float] = 1.5):
         super().__init__()
         self.num_points = num_points
         self.augment = augment
@@ -68,7 +69,7 @@ class AXLDataset(Dataset):
         self.shards = sorted(p for p in (Path(cache_dir) / split).glob("rg*.npz") if not p.name.endswith(".tmp.npz"))[:max_shards]
         self._arrays = {}
 
-        shard_ids, positions, uuids, groups, self._meta = [], [], [], [], []
+        shard_ids, positions, uuids, groups, reach, self._meta = [], [], [], [], [], []
         for s, path in enumerate(self.shards):
             with np.load(path) as shard:
                 meta = {key: shard[key] for key in ("point_offsets", "joint_offsets", "joints", "parents")}
@@ -78,9 +79,17 @@ class AXLDataset(Dataset):
             positions += list(range(len(shard_uuids)))
             uuids += shard_uuids.tolist()
             groups += shard_groups.tolist()
-        self._index = np.stack([shard_ids, positions], axis=1) if shard_ids else np.zeros((0, 2), np.int64)
-        self.uuids = np.array(uuids)
-        self.groups = np.array(groups)
+            offsets = meta["joint_offsets"]
+            reach += [float(np.abs(meta["joints"][offsets[k]:offsets[k + 1]]).max()) for k in range(len(shard_uuids))]
+        # Meshes fit in the unit box; a few rigs place joints tens of units away, and the skinning augmentation
+        # then flings points just as far: one such creature in a batch multiplies its loss by ~100
+        reach = np.array(reach)
+        keep = reach <= max_joint_reach if max_joint_reach is not None else np.ones(len(reach), bool)
+        self.excluded = int((~keep).sum())
+        self._index = np.stack([shard_ids, positions], axis=1)[keep] if shard_ids else np.zeros((0, 2), np.int64)
+        self.uuids = np.array(uuids)[keep]
+        self.groups = np.array(groups)[keep]
+        self.joint_reach = reach[keep]
 
     def __len__(self) -> int:
         return len(self._index)

@@ -214,6 +214,19 @@ Avec la cible devenue presque déterministe, la loss continue de baisser bien ap
 
 Le gain vient de la durée, pas du calendrier : un taux constant fait aussi bien qu'une décroissance en cosinus. Le run de 360 époques passe par 0.0031 à 180 époques et 0.0028 à 270 : le gain continue mais ralentit, et 180 époques est le défaut (environ 32 min). Réduire les tirages de bruit OT de 8 à 2 par forme ne change rien à 90 époques (écart médian 0.0041 contre 0.0040, MMD 0.00094 contre 0.00092) : la diversité du bruit apparié ne limite pas le modèle.
 
+### OT sur GPU pendant l'entraînement
+
+L'appariement exact (hongrois sur CPU) prend des secondes par forme et ne peut pas être précalculé pour des dizaines de milliers de créatures déformées. `models/ot_gpu.py` le remplace par un Sinkhorn entropique sur GPU (ε recuit de 0.3 à 0.01, 20 itérations), arrondi en permutation exacte, sur 4 blocs aléatoires de 512 points : 0.29 s par lot de 32 à 2048 points, pour un coût de transport 1,09 fois l'optimum (`data.online_ot`). Sur les quadrupèdes (200 contre 200, Euler 10) :
+
+| | OT exact | OT GPU |
+|---|---|---|
+| Écart médian à la surface, 90 époques | 0.0038 / 0.0040 | 0.0036 |
+| Écart médian à la surface, 180 époques | 0.0029 / 0.0030 | 0.0028 |
+| MMD-CD, 180 époques | 0.00084 / 0.00085 | 0.00082 |
+| COV-CD, 180 époques | 57 % / 56 % | 54 % |
+
+L'approximation ne coûte rien de mesurable : c'est le couplage du modèle à squelette libre.
+
 Le modèle publié et la visionneuse utilisent le générateur v4, `data_scale: 4`, le couplage OT pur, 180 époques en bf16 à taux constant (run 0) et Euler 10.
 
 ## 🧬 Données Articulation-XL (en cours)

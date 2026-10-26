@@ -15,6 +15,9 @@ model:
 training:
   batch_size: 16             # B=32 peaks at 8.3 GB with 70+ joints (spills to system RAM, 2.3 s/step); B=16: 4.6 GB at 99 joints
   learning_rate: 0.0002
+  lr_schedule: "cosine"      # v1 kept 2e-4 flat for 10 epochs and collapsed in epoch 6
+  warmup_steps: 1000
+  min_lr_ratio: 0.1
   weight_decay: 0.00001
   num_epochs: 10             # ~30 samples/s on an RTX 4060 laptop: about 3.7 h for 10 passes over 40K creatures
   mixed_precision: "bf16"
@@ -23,7 +26,7 @@ training:
   z_drop_prob: 0.3
   ot_iters: 20
   save_every: 2
-  checkpoint_dir: "checkpoints/axl_v1"
+  checkpoint_dir: "checkpoints/axl_v2"
   device: "cuda"
 
 sampling:

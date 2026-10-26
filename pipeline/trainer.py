@@ -50,12 +50,14 @@ class Trainer:
         # bf16 autocast keeps fp32 weights and needs no loss scaling
         self.amp_dtype = torch.bfloat16 if mixed_precision == "bf16" else None
         self.checkpoint_dir = checkpoint_dir
+        self.skipped_steps = 0
         os.makedirs(checkpoint_dir, exist_ok=True)
 
     def train_epoch(self, epoch: int) -> float:
         self.fm.model.train()
         total_loss = 0.0
-        
+        finite_steps = 0
+
         for batch in self.dataloader:
             self.optimizer.zero_grad()
             with torch.autocast(self.device.type, dtype=self.amp_dtype, enabled=self.amp_dtype is not None):
@@ -67,16 +69,21 @@ class Trainer:
                     jts = batch["joints"].to(self.device)
                     noise = batch["noise"].to(self.device) if "noise" in batch else None
                     loss = self.fm.compute_loss(pts, jts, x_0=noise)
+            if not torch.isfinite(loss):
+                # One non-finite step would spread NaN through every weight via the optimizer and the EMA
+                self.skipped_steps += 1
+                self.scheduler.step()
+                continue
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.fm.model.parameters(), max_norm=1.0)
             self.optimizer.step()
             self.scheduler.step()
             self.ema.update(self.fm.model)
-            
+
             total_loss += loss.item()
-            
-        avg_loss = total_loss / len(self.dataloader)
-        return avg_loss
+            finite_steps += 1
+
+        return total_loss / finite_steps if finite_steps else float("nan")
 
     def save_checkpoint(self, epoch: int) -> str:
         path = os.path.join(self.checkpoint_dir, f"model_epoch_{epoch:03d}.pt")
