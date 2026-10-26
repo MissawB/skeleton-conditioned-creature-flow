@@ -9,12 +9,15 @@ let currentCreature = null;
 let currentIdx = -1;
 let isPlaying = false;
 let flowT = 0.0;
+let morph = null; // { from: Float32Array, start: ms } while blending between specimens
 
 const NOISE_COLOR = new THREE.Color(0x8da197);
 const BONE_COLOR = new THREE.Color(0xe9e3d2);
 const OCHRE = 0xd6a23e;
 const BACKGROUND = 0x141c1a;
 const PLAY_SPEED = 0.25; // flow time per second
+const MORPH_MS = 700;
+const POINT_SIZE = 0.028;
 const DEFAULT_CAM_OFFSET = new THREE.Vector3(1.9, 0.9, 2.3);
 
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -55,20 +58,43 @@ function init() {
   window.addEventListener("resize", onWindowResize);
 }
 
-// Round, soft-edged sprite so points read as particles instead of squares
-function makeDotTexture() {
-  const size = 64;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  g.addColorStop(0, "rgba(255,255,255,1)");
-  g.addColorStop(0.55, "rgba(255,255,255,0.9)");
-  g.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, size, size);
-  return new THREE.CanvasTexture(canvas);
-}
+// Points are shaded as small lit spheres, so the cloud reads as a volume.
+// Colour follows flow time (sage noise -> bone) with light falling from above.
+const POINT_VERTEX = /* glsl */ `
+  uniform float uSize;
+  uniform float uScale;
+  uniform float uT;
+  uniform float uFloorY;
+  uniform vec3 uNoiseColor;
+  uniform vec3 uBoneColor;
+  varying vec3 vColor;
+  #include <fog_pars_vertex>
+  void main() {
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * mvPosition;
+    gl_PointSize = uSize * uScale / -mvPosition.z;
+    float shade = 0.72 + 0.28 * clamp((position.y - uFloorY) / 1.1, 0.0, 1.0);
+    vColor = mix(uNoiseColor, uBoneColor, uT) * shade;
+    #include <fog_vertex>
+  }
+`;
+
+const POINT_FRAGMENT = /* glsl */ `
+  varying vec3 vColor;
+  #include <fog_pars_fragment>
+  void main() {
+    vec2 uv = gl_PointCoord * 2.0 - 1.0;
+    float r2 = dot(uv, uv);
+    if (r2 > 1.0) discard;
+    vec3 n = vec3(uv.x, -uv.y, sqrt(1.0 - r2));
+    float light = 0.55 + 0.45 * max(dot(n, normalize(vec3(-0.4, 0.7, 0.6))), 0.0);
+    gl_FragColor = vec4(vColor * light, 1.0);
+    #include <colorspace_fragment>
+    #include <fog_fragment>
+  }
+`;
+
+const smoothstep01 = (x) => x * x * (3 - 2 * x);
 
 function buildFloor() {
   // Faint concentric rings, like the base of a specimen jar
@@ -184,6 +210,10 @@ function loadData() {
     })
     .then((data) => {
       creaturesData = data.creatures;
+      // Flatten each step once so the per-frame interpolation reads typed arrays
+      creaturesData.forEach((c) => {
+        c._steps = c.trajectory.map((pts) => Float32Array.from(pts.flat()));
+      });
       buildSpecimenList();
       loadCreature(0);
       if (!reducedMotion) {
@@ -230,7 +260,12 @@ function buildTicks(steps) {
 }
 
 function loadCreature(idx) {
-  if (!creaturesData[idx]) return;
+  if (!creaturesData[idx] || idx === currentIdx) return;
+  // Particles drift from the old specimen into the new one instead of jumping
+  if (pointCloud && currentCreature && !reducedMotion &&
+      pointCloud.geometry.attributes.position.count === creaturesData[idx].trajectory[0].length) {
+    morph = { from: pointCloud.geometry.attributes.position.array.slice(), start: performance.now() };
+  }
   currentIdx = idx;
   currentCreature = creaturesData[idx];
 
@@ -323,60 +358,81 @@ function buildPointCloud(numPoints) {
     pointCloud.geometry.dispose();
   }
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(numPoints * 3), 3));
-  geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(numPoints * 3), 3));
-  const mat = new THREE.PointsMaterial({
-    size: 0.03,
-    map: makeDotTexture(),
-    vertexColors: true,
-    transparent: true,
-    alphaTest: 0.2,
-    depthWrite: true,
+  const pos = new THREE.BufferAttribute(new Float32Array(numPoints * 3), 3);
+  pos.setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute("position", pos);
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: POINT_VERTEX,
+    fragmentShader: POINT_FRAGMENT,
+    fog: true,
+    uniforms: THREE.UniformsUtils.merge([
+      THREE.UniformsLib.fog,
+      {
+        uSize: { value: POINT_SIZE },
+        uScale: { value: 1 },
+        uT: { value: 0 },
+        uFloorY: { value: 0 },
+        uNoiseColor: { value: NOISE_COLOR },
+        uBoneColor: { value: BONE_COLOR },
+      },
+    ]),
   });
   pointCloud = new THREE.Points(geo, mat);
+  updatePointScale();
   pointCloud.frustumCulled = false;
   scene.add(pointCloud);
 }
 
 function updatePointCloud(tVal) {
   if (!currentCreature || !pointCloud) return;
-  const traj = currentCreature.trajectory;
-  const numSteps = traj.length - 1;
+  const steps = currentCreature._steps;
+  const numSteps = steps.length - 1;
 
+  // Catmull-Rom through the solver steps, so motion has no kink at each step
   const stepFloat = tVal * numSteps;
-  const stepIdx = Math.min(numSteps - 1, Math.floor(stepFloat));
-  const alpha = stepFloat - stepIdx;
-  const ptsA = traj[stepIdx];
-  const ptsB = traj[stepIdx + 1];
+  const i1 = Math.min(numSteps - 1, Math.floor(stepFloat));
+  const a = stepFloat - i1;
+  const P0 = steps[Math.max(0, i1 - 1)];
+  const P1 = steps[i1];
+  const P2 = steps[i1 + 1];
+  const P3 = steps[Math.min(numSteps, i1 + 2)];
+  const a2 = a * a;
+  const a3 = a2 * a;
+  const w0 = 0.5 * (-a3 + 2 * a2 - a);
+  const w1 = 0.5 * (3 * a3 - 5 * a2 + 2);
+  const w2 = 0.5 * (-3 * a3 + 4 * a2 + a);
+  const w3 = 0.5 * (a3 - a2);
+
+  let m = 0;
+  if (morph) {
+    const k = Math.min(1, (performance.now() - morph.start) / MORPH_MS);
+    m = 1 - smoothstep01(k);
+    if (k >= 1) morph = null;
+  }
 
   const pos = pointCloud.geometry.attributes.position;
-  const col = pointCloud.geometry.attributes.color;
-  const floorY = floorGroup.position.y;
-  const tmp = new THREE.Color();
-
-  for (let i = 0; i < ptsA.length; i++) {
-    const x = (1 - alpha) * ptsA[i][0] + alpha * ptsB[i][0];
-    const y = (1 - alpha) * ptsA[i][1] + alpha * ptsB[i][1];
-    const z = (1 - alpha) * ptsA[i][2] + alpha * ptsB[i][2];
-    pos.array[i * 3] = x;
-    pos.array[i * 3 + 1] = y;
-    pos.array[i * 3 + 2] = z;
-
-    // Colour tracks flow time (sage noise -> bone), with light falling from above
-    const shade = 0.72 + 0.28 * Math.min(1, Math.max(0, (y - floorY) / 1.1));
-    tmp.copy(NOISE_COLOR).lerp(BONE_COLOR, tVal).multiplyScalar(shade);
-    col.array[i * 3] = tmp.r;
-    col.array[i * 3 + 1] = tmp.g;
-    col.array[i * 3 + 2] = tmp.b;
+  const out = pos.array;
+  for (let j = 0; j < out.length; j++) {
+    const v = w0 * P0[j] + w1 * P1[j] + w2 * P2[j] + w3 * P3[j];
+    out[j] = m > 0 ? v + (morph.from[j] - v) * m : v;
   }
   pos.needsUpdate = true;
-  col.needsUpdate = true;
+
+  const u = pointCloud.material.uniforms;
+  u.uT.value = tVal;
+  u.uFloorY.value = floorGroup.position.y;
+}
+
+// Same attenuation as PointsMaterial: world size scaled by half the drawing-buffer height
+function updatePointScale() {
+  if (pointCloud) pointCloud.material.uniforms.uScale.value = renderer.domElement.height / 2;
 }
 
 function onWindowResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  updatePointScale();
 }
 
 let lastFrame = performance.now();
@@ -389,6 +445,8 @@ function animate(now = performance.now()) {
     const next = flowT + dt * PLAY_SPEED;
     setFlowTime(next);
     if (next >= 1.0) setPlaying(false);
+  } else if (morph) {
+    updatePointCloud(flowT);
   }
 
   controls.update();
