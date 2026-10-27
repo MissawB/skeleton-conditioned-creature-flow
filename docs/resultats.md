@@ -237,6 +237,23 @@ Les silhouettes suivent le squelette (posture, proportions, humanoïdes nets), m
 
 Deux premiers essais se sont effondrés à l'époque 6 (fm de 0.075 à 0.58). La cause : le vecteur de conditionnement de l'AdaLN, non normalisé, s'est emballé (norme du plongement de t de 22 à 197, jeton global du squelette de 1,9 à 52, modulations jusqu'à 78). Un LayerNorm sur ce vecteur l'a supprimé. En chemin : 9 rigs dont une articulation est à plus de 1,5 du centre (jusqu'à 78, alors que le maillage tient dans la sphère unité) sont écartés, car l'augmentation projetait leurs points aussi loin et multipliait la perte du lot par 100 ; les pas non finis sont sautés ; le taux d'apprentissage suit un cosinus avec échauffement.
 
+### Code de forme déterministe (axl_v4)
+
+Même modèle et même entraînement, mais z est la moyenne de l'encodeur, sans bruit ni KL (`stochastic_z: false`). Sur un petit modèle entraîné depuis zéro, ce changement faisait passer le gain apporté par z de 1,6 % à 6,8 % de la perte de flow ; faire aussi entrer z dans chaque point n'apportait rien de plus.
+
+| | Squelette seul | Squelette + z |
+|---|---|---|
+| MMD-CD | 0.0129 | **0.0090** |
+| COV-CD | 74 % | **91 %** |
+| 1-NNA (50 % idéal) | 26,8 % | **11,7 %** |
+| Écart médian au nuage réel | 0.051 | **0.045** |
+
+Planche : [`axl/plate_axl_v4.png`](axl/plate_axl_v4.png).
+
+z porte maintenant de l'information : avec le code d'une créature réelle, la génération s'en rapproche nettement. Un 1-NNA sous 50 % signifie que les générations sont plus proches de leur cible que d'un tirage indépendant, ce qui est attendu d'une quasi-reconstruction. Sans z, le modèle reste au niveau de la v3.
+
+Revers : la sensibilité au squelette, z fixé, tombe de 0.68 à 0.19. Une partie de la forme passe désormais par z plutôt que par le squelette. Pour les chimères, où l'on mélangera à la fois les squelettes et les codes, c'est à surveiller : un z trop dominant ferait suivre le code plutôt que le squelette mélangé. Visuellement, la surface reste floue et les têtes restent illisibles ; ce sera le rôle de la passe visage.
+
 ---
 
 ## ⚠️ Limites
