@@ -18,6 +18,15 @@ def test_large_clouds_are_subsampled():
     assert mu.shape == (3, 8) and torch.isfinite(mu).all()
 
 
+def test_eval_code_is_reproducible_and_training_code_varies():
+    enc = ShapeEncoder(z_dim=8, hidden_dim=32, num_points=64)
+    cloud = torch.randn(2, 2048, 3)
+    enc.eval()
+    assert torch.equal(enc(cloud)[0], enc(cloud)[0])
+    enc.train()
+    assert not torch.equal(enc(cloud)[0], enc(cloud)[0])
+
+
 def test_kl_is_zero_for_the_prior():
     assert kl_divergence(torch.zeros(4, 8), torch.zeros(4, 8)).item() == 0.0
     assert kl_divergence(torch.ones(4, 8), torch.zeros(4, 8)).item() > 0

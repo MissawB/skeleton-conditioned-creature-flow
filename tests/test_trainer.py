@@ -71,6 +71,19 @@ def test_non_finite_steps_are_skipped_without_touching_the_weights(tmp_path):
     assert all(torch.isfinite(p).all() for p in trainer.ema.model.parameters())
 
 
+def test_steps_with_non_finite_gradients_are_skipped(tmp_path):
+    dataset = CreatureDataset(num_samples_per_family=2, num_points=64, augment=False, cache_dir=None)
+    model = PointDiT(point_dim=3, hidden_dim=32, num_layers=1, num_heads=2, num_joints=35)
+    trainer = Trainer(OptimalTransportFlowMatching(model), dataset, batch_size=2, lr=1e-3, checkpoint_dir=str(tmp_path), device="cpu")
+    # Finite loss, poisoned backward
+    model.point_proj.weight.register_hook(lambda g: g * float("nan"))
+    before = [p.detach().clone() for p in model.parameters()]
+    trainer.train_epoch(0)
+    assert trainer.skipped_steps == len(trainer.dataloader)
+    assert all(torch.equal(a, b) for a, b in zip(before, model.parameters()))
+    assert all(torch.isfinite(p).all() for p in trainer.ema.model.parameters())
+
+
 def test_resume_restores_model_ema_optimizer_and_epoch(tmp_path):
     from data.dataset import CreatureDataset
     from models.flow_matching import OptimalTransportFlowMatching

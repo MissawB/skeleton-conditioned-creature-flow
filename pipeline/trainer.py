@@ -69,13 +69,14 @@ class Trainer:
                     jts = batch["joints"].to(self.device)
                     noise = batch["noise"].to(self.device) if "noise" in batch else None
                     loss = self.fm.compute_loss(pts, jts, x_0=noise)
-            if not torch.isfinite(loss):
-                # One non-finite step would spread NaN through every weight via the optimizer and the EMA
+            # One non-finite step (loss or gradients) would spread NaN through every weight via the optimizer and the EMA
+            if torch.isfinite(loss):
+                loss.backward()
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.fm.model.parameters(), max_norm=1.0)
+            if not torch.isfinite(loss) or not torch.isfinite(grad_norm):
                 self.skipped_steps += 1
                 self.scheduler.step()
                 continue
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.fm.model.parameters(), max_norm=1.0)
             self.optimizer.step()
             self.scheduler.step()
             self.ema.update(self.fm.model)

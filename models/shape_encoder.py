@@ -10,10 +10,14 @@ class ShapeEncoder(nn.Module):
         self.head = nn.Sequential(nn.Linear(4 * hidden_dim, 2 * hidden_dim), nn.GELU(), nn.Linear(2 * hidden_dim, 2 * z_dim))
 
     def forward(self, points: torch.Tensor):
-        """(mu, logvar), each (B, z_dim); clouds larger than num_points are subsampled at random."""
+        """(mu, logvar), each (B, z_dim); clouds larger than num_points are subsampled, at random in training
+        and with a fixed stride in eval so that a cloud always gets the same code."""
         B, N, _ = points.shape
         if N > self.num_points:
-            idx = torch.rand(B, N, device=points.device).argsort(dim=1)[:, :self.num_points]
+            if self.training:
+                idx = torch.rand(B, N, device=points.device).argsort(dim=1)[:, :self.num_points]
+            else:
+                idx = torch.linspace(0, N - 1, self.num_points, device=points.device).long().expand(B, -1)
             points = points.gather(1, idx[..., None].expand(-1, -1, 3))
         feat = self.point_mlp(points)
         pooled = torch.cat([feat.max(dim=1).values, feat.mean(dim=1)], dim=-1)
