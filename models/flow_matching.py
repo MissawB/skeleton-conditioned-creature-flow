@@ -1,14 +1,16 @@
 import torch
 import torch.nn as nn
+from models.ot_gpu import ot_match
 from typing import Tuple, List, Optional
 
 class OptimalTransportFlowMatching:
     """Optimal Transport Flow Matching (OT-FM) framework with Euler and Heun ODE solvers."""
     
-    def __init__(self, model: nn.Module, cond_drop_prob: float = 0.0, late_t_prob: float = 0.0, late_t_min: float = 0.9):
+    def __init__(self, model: nn.Module, cond_drop_prob: float = 0.0, late_t_prob: float = 0.0, late_t_min: float = 0.9, online_ot: bool = False):
         self.model = model
         # Share of training samples whose skeleton is dropped, enabling classifier-free guidance
         self.cond_drop_prob = cond_drop_prob
+        self.online_ot = online_ot
         # Share of samples drawn from t ~ U[late_t_min, 1], where the fine surface detail is resolved
         self.late_t_prob = late_t_prob
         self.late_t_min = late_t_min
@@ -50,6 +52,9 @@ class OptimalTransportFlowMatching:
         # Sample x_0 ~ N(0, I) and t ~ U[0, 1]
         if x_0 is None:
             x_0 = torch.randn_like(x_1)
+            if self.online_ot:
+                # Per-shape OT computed on the fly (GPU Sinkhorn), instead of precomputed matched noise
+                x_0 = ot_match(x_0, x_1)
         t = torch.rand(B, device=device)
         if self.late_t_prob > 0:
             late = torch.rand(B, device=device) < self.late_t_prob

@@ -1,0 +1,34 @@
+﻿# Free-skeleton creature model trained on the Articulation-XL cache (stage 2a)
+data:
+  cache_dir: "data/cache/axl"
+  num_points: 2048
+  animal_ratio: 0.7          # share of animals and mythical creatures among training draws
+  num_workers: 6
+
+model:
+  hidden_dim: 256
+  num_layers: 6
+  num_heads: 8
+  z_dim: 64
+  data_scale: 3.5            # measured: augmented creatures have std 0.288, so std * 3.5 ~ 1 like the noise
+
+training:
+  batch_size: 16             # B=32 peaks at 8.3 GB with 70+ joints (spills to system RAM, 2.3 s/step); B=16: 4.6 GB at 99 joints
+  learning_rate: 0.0002
+  lr_schedule: "cosine"      # v1 kept 2e-4 flat for 10 epochs and collapsed in epoch 6
+  warmup_steps: 1000
+  min_lr_ratio: 0.1
+  weight_decay: 0.00001
+  num_epochs: 10             # ~30 samples/s on an RTX 4060 laptop: about 3.7 h for 10 passes over 40K creatures
+  mixed_precision: "bf16"
+  ema_decay: 0.995
+  stochastic_z: false       # z = encoder mean: the VAE code was ignored (z gain 1.6 % vs 6.8 % deterministic)
+  kl_weight: 0.001          # unused when stochastic_z is false
+  z_drop_prob: 0.3
+  ot_iters: 20
+  save_every: 2
+  checkpoint_dir: "checkpoints/axl_v4"
+  device: "cuda"
+
+sampling:
+  num_steps: 10

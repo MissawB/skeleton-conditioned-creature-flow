@@ -54,3 +54,26 @@ def test_dataset_reads_shards_lazily_and_returns_unit_radius_points(tmp_path):
     assert item["presence"].tolist() == [1.0] * 35 and item["parents"][0] == -1
     batch = collate_skeletons([ds[0], ds[1], ds[2]])
     assert batch["joints"].shape == (3, 35, 3)
+
+
+def test_max_shards_limits_the_dataset(tmp_path):
+    cache = _cache(tmp_path)
+    assert len(AXLDataset(str(cache), "train", augment=False, max_shards=1)) < len(AXLDataset(str(cache), "train", augment=False))
+
+
+def test_rigs_with_joints_far_outside_the_mesh_are_left_out(tmp_path):
+    cache = _cache(tmp_path)
+    full = AXLDataset(str(cache), "train", augment=False, max_joint_reach=None)
+    reach = dict(zip(full.uuids, full.joint_reach))
+    threshold = sorted(reach.values())[1] + 1e-6           # keeps the two rigs with the shortest reach
+    ds = AXLDataset(str(cache), "train", augment=False, max_joint_reach=threshold)
+    assert sorted(ds.uuids) == sorted(u for u, r in reach.items() if r <= threshold) and len(ds) == 2
+    assert ds.excluded == 1
+    for i in range(len(ds)):
+        assert ds[i]["uuid"] == ds.uuids[i] and ds[i]["joints"].abs().max() <= threshold
+
+
+def test_joint_names_are_read_from_the_shard(tmp_path):
+    ds = AXLDataset(str(_cache(tmp_path)), "train", augment=False)
+    i = list(ds.uuids).index("stick")
+    assert ds.joint_names(i) == ["j0", "j1"]
