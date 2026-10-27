@@ -22,9 +22,13 @@ class CreatureModel(nn.Module):
 
 class CreatureFlowMatching:
     def __init__(self, model: CreatureDiT, shape_encoder: ShapeEncoder, kl_weight: float = 1e-3,
-                 z_drop_prob: float = 0.3, cond_drop_prob: float = 0.0, ot_iters: int = 20, online_ot: bool = True):
+                 z_drop_prob: float = 0.3, cond_drop_prob: float = 0.0, ot_iters: int = 20, online_ot: bool = True,
+                 stochastic_z: bool = True):
         self.model = CreatureModel(model, shape_encoder)
         self.kl_weight = kl_weight
+        # False: z is the encoder mean, no sampling noise and no KL. The noisy code was drowned out (|mu| ~ 0.05
+        # against unit noise) and the model ignored it; chimeras blend real codes, so no prior is needed
+        self.stochastic_z = stochastic_z
         self.z_drop_prob = z_drop_prob
         self.cond_drop_prob = cond_drop_prob
         self.ot_iters = ot_iters
@@ -43,7 +47,7 @@ class CreatureFlowMatching:
         B = x_1.shape[0]
 
         mu, logvar = self.model.shape_encoder(x_1)
-        z = reparameterize(mu, logvar)
+        z = reparameterize(mu, logvar) if self.stochastic_z else mu
         # Without z the model must still grow a creature from the skeleton alone
         z = z * (torch.rand(B, 1, device=device) >= self.z_drop_prob)
 
@@ -57,7 +61,7 @@ class CreatureFlowMatching:
 
         pred = self.model.dit(x_t, t, joints, parents, presence, joint_mask, z=z, cond_mask=cond_mask)
         fm = torch.mean((pred.float() - (x_1 - x_0).float()) ** 2)
-        kl = kl_divergence(mu.float(), logvar.float())
+        kl = kl_divergence(mu.float(), logvar.float()) if self.stochastic_z else torch.zeros((), device=device)
         self.last_stats = {"fm": fm.item(), "kl": kl.item()}
         return fm + self.kl_weight * kl
 

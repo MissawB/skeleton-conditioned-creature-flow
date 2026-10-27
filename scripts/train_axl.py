@@ -20,7 +20,7 @@ def build_flow(cfg: dict) -> CreatureFlowMatching:
     dit = CreatureDiT(hidden_dim=m["hidden_dim"], num_layers=m["num_layers"], num_heads=m["num_heads"],
                       z_dim=m["z_dim"], data_scale=m["data_scale"])
     return CreatureFlowMatching(dit, ShapeEncoder(z_dim=m["z_dim"]), kl_weight=t["kl_weight"],
-                                z_drop_prob=t["z_drop_prob"], ot_iters=t["ot_iters"])
+                                z_drop_prob=t["z_drop_prob"], ot_iters=t["ot_iters"], stochastic_z=t.get("stochastic_z", True))
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

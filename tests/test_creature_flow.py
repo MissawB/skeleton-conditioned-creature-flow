@@ -57,3 +57,17 @@ def test_creature_flow_overfits_two_creatures(tmp_path):
     assert fm.last_stats["fm"] < 0.5 * first
     _, points = fm.sample(batch["joints"], batch["parents"], batch["presence"], batch["joint_mask"], num_points=256)
     assert points.shape == (2, 256, 3) and torch.isfinite(points).all()
+
+
+def test_deterministic_shape_code_is_the_encoder_mean(tmp_path):
+    # A noisy z (VAE) was ignored by the model: from scratch, a deterministic code buys 4x more (6.8 % vs 1.6 %)
+    ds = AXLDataset(_cache(tmp_path), "train", num_points=128, augment=False)
+    batch = collate_skeletons([ds[0], ds[1]])
+    fm = _flow()
+    fm.z_drop_prob, fm.stochastic_z = 0.0, False
+    seen = []
+    fm.model.dit.z_proj.register_forward_hook(lambda m, inputs, out: seen.append(inputs[0].detach()))
+    fm.loss_from_batch(batch)
+    mu = fm.model.shape_encoder(batch["points"] * fm.model.data_scale)[0]
+    assert torch.allclose(seen[0], mu, atol=1e-6)
+    assert fm.last_stats["kl"] == 0.0
